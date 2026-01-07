@@ -22,8 +22,6 @@ Documenter les choix technologiques de manière structurée et argumentée, en p
 
 #### Python ✅ Retenu
 
-### Python ✅ Retenu
-
 **Bibliothèques évaluées :**
 
 - `requests` : extraction API simple et efficace
