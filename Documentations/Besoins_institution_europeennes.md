@@ -1,5 +1,4 @@
-# Titre
-Identifier les besoins des Institutions Européennes
+# Identifier les besoins des Institutions Européennes
 
 ## Contexte
 Ce document vise à définir les exigences fonctionnelles et techniques du Data Warehouse (entrepôt de données) pour qu'il serve efficacement les missions d'ObRail Europe auprès des institutions publiques. ObRail collabore avec la Commission européenne et le Parlement européen pour alimenter les politiques publiques, notamment dans le cadre du Green Deal et du programme TEN-T (Trans-European Transport Network). L'objectif est de fournir des données fiables pour soutenir la transition écologique et mesurer la compétitivité du rail face à l'avion sur les trajets intra-européens.
