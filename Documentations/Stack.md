@@ -84,6 +84,34 @@ Documenter les choix technologiques de manière structurée et argumentée, en p
 - **requests/SQLAlchemy** : connecteurs et interactions API/SGBD
 - **Python** : orchestration, scripting utilitaire
 
+## 2. Évaluer les technologies pour le stockage dans DataMarks
+
+### Solutions évaluées
+
+Trois moteurs ont été étudiés :
+
+1.  **PostgreSQL** : SGBD relationnel objet, standard de l'industrie pour les données complexes.
+2.  **MySQL / MariaDB** : SGBD relationnel très populaire, orienté Web.
+3.  **SQLite** : Base de données fichier, légère, sans serveur.
+
+### Matrice de comparaison
+
+| Critère                         | PostgreSQL                                                                                                                                                                 | MySQL / MariaDB                                                                                                                                    | SQLite                                                                                                                                                |
+| :------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fonctionnalités Analytiques** | **Excellente.** Support natif avancé du JSON (JSONB), fonctions de fenêtrage puissantes, et extensibilité via PostGIS (pertinent pour nos distances/trajets ferroviaires). | **Bonne.** Supporte JSON et l'analytique standard, mais moins performant sur les requêtes complexes ou les types de données géographiques avancés. | **Limitée.** Suffisant pour du stockage simple, mais manque de types de données avancés (dates, tableaux) nécessaires pour un Data Warehouse robuste. |
+| **Compatibilité Projet**        | **Totale.** Explicitement recommandé par le client ObRail[cite: 284].                                                                                                      | **Partielle.** Nécessite de vérifier la compatibilité des scripts fournis ou des outils tiers.                                                     | **Faible.** Non adapté à un accès concurrent (API + équipe Data Science en simultané).                                                                |
+| **Facilité de déploiement**     | **Standard.** Conteneurisation Docker simple et maîtrisée. Image officielle disponible.                                                                                    | **Standard.** Conteneurisation Docker simple.                                                                                                      | **Très simple.** Un seul fichier. Idéal pour dev local, mais devient un goulot d'étranglement en production.                                          |
+| **Performance & Intégrité**     | **Élevée.** Forte conformité ACID, intégrité référentielle stricte (cruciale pour nos données hétérogènes [cite: 121]).                                                    | **Élevée.** Très rapide en lecture simple, mais gestion des contraintes parfois plus souple selon la configuration.                                | **Moyenne.** Performant en lecture, mais verrouillage de la base en écriture (problématique pour l'ETL).                                              |
+
+### Recommandation argumentée et décisions
+
+1.  **Conformité au Cahier des Charges :** Le client mentionne explicitement PostgreSQL comme "base de données cible" et "référence officielle du SGBD recommandé" dans les ressources fournies[cite: 284, 291]. S'aligner sur cette recommandation facilite la validation du livrable "Base de données relationnelle alimentée"[cite: 155].
+2.  **Rigueur sur la qualité des données :** Le projet exige de traiter des données de "qualité hétérogène" (doublons, formats variables)[cite: 69]. Le typage fort et les contraintes d'intégrité strictes de PostgreSQL nous aideront à garantir la fiabilité du référentiel final.
+3.  **Capacités Data Science :** L'équipe Data Science d'ObRail devra exploiter ces données[cite: 100]. PostgreSQL s'interface parfaitement avec Python (SQLAlchemy/Pandas) et gère mieux les requêtes analytiques complexes que MySQL.
+4.  **Interopérabilité :** PostgreSQL est le standard pour les déploiements conteneurisés (Docker) attendus pour la reproductibilité du projet[cite: 129].
+
+**Choix validé : PostgreSQL.**
+
 ## 3. Évaluer les technologies pour l'exposition des données par endpoint API
 
 ### Tableaux comparatifs des principaux critères
