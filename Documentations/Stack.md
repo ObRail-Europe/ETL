@@ -35,7 +35,7 @@ Documenter les choix technologiques de manière structurée et argumentée, en p
 - Syntaxe lisible = maintenabilité élevée
 - Intégration native avec Spark (PySpark)
 
-### Spark : Python vs Java
+#### Spark : Python vs Java
 
 | Critère                | PySpark               | Spark Java/Scala |
 | ---------------------- | --------------------- | ---------------- |
@@ -61,7 +61,7 @@ Documenter les choix technologiques de manière structurée et argumentée, en p
 - Alternative viable pour pipelines non-distribués
 - Conclusion : à considérer pour composants spécifiques
 
-### R (tidyverse) ❌ Non retenu
+#### R (tidyverse) ❌ Non retenu
 
 - Excellente suite pour analyse statistique
 - Équipe sans compétences R
