@@ -22,6 +22,7 @@
 | `/trajets/train` | `ville_depart`, `ville_arrivee`, `est_jour` (booléen), `est_long` (booléen) | Trajets de train avec filtres | JSON array, pagination (limit, offset) |
 | `/trajets/avion` | `ville_depart`, `ville_arrivee`, `distance_min`, `distance_max`, `heure_min`, `heure_max` | Trajets d'avion avec filtres | JSON array, pagination (limit, offset) |
 
+
 ## Endpoints d'Analyse et Comparaison
 **Méthode : GET**
 
@@ -29,6 +30,8 @@
 |----------|-----------|--------|-------------------|
 | `/comparaison/impact` | `ville_depart`, `ville_arrivee` | Comparaison CO2 entre meilleur trajet train et vol direct | JSON: `{ "train": object, "avion": object, "meilleur": string }` |
 | `/statistiques/maillage` | - | Ratio couverture trains jour vs nuit | JSON: `{ "jour": number, "nuit": number, "ratio": number }` |
+| `/comparaison/maillage` | `ville_depart`, `ville_arrivee` | Comparaison CO2 entre trajet en jour et trajet en nuit| JSON: `{ "jour": number, "nuit": number, "meilleur": string }` |
+
 | `/statistiques/qualite` | - | Métriques du tableau de bord | JSON: `{ "metrics": [] }` |
 
 ## Endpoints de Référentiel Carbone
