@@ -9,34 +9,31 @@ L'objectif est de définir les règles pour uniformiser les codes d'identificati
 En tant que Data Architect, voici les règles de standardisation des identifiants de gares pour garantir unicité et cohérence des références géographiques, basées sur les standards UIC (principal), IATA (pour liaisons aériennes) et codes internes SNCF (trigrammes, TT00020, RESARAIL).
 
 __Standard de codification retenu
+
 - UIC (reférentiel principal) : Code unique international à 7 chiffres (`uic_ref=*`) pour toutes les gares ferroviaires, complété par code UIC8 SNCF (`ref:FR:uic8=*`) pour usage national.
-
 - IATA (secondaire) : Codes à 3 lettres pour gares TGV connectées à l'aviation (ex. XPG pour Paris Gare du Nord, XDT pour CDG 2 TGV).
-
 - Codes internes SNCF : Trigammes (ex. PE pour Paris-Est), TT00020 (ex. SG pour Strasbourg), RESARAIL (ex. FRAEG pour Strasbourg billetique).
 
  Règles de mapping entre standards
 Utilisez une table de correspondance pour mapper les codes (ex. via datasets data.gouv.fr ou data.sncf.com) :
-| Standard | Exemple gare | Code     | Mapping source                             |
-|----------|--------------|----------|--------------------------------------------|
-| UIC7     | Strasbourg   | 8777123  | OpenStreetMap uic_ref, data.gouv UIC codes |
-| UIC8 SNCF| Strasbourg   | 00877123 | ref:FR:uic8                                |
-| Trigamme | Paris-Est    | PE       | data.gouv trigramme, data.sncf             |
-| TT00020  | Strasbourg   | SG       | data.sncf TT00020                          |
-| RESARAIL | Strasbourg   | FRAEG    | Trainline opendata                         |
-| IATA     | Paris Nord   | XPG      | Wikipedia IATA list                        |
+
+| Standard  | Exemple gare | Code     | Mapping source                             |
+| --------- | ------------ | -------- | ------------------------------------------ |
+| UIC7      | Strasbourg   | 8777123  | OpenStreetMap uic_ref, data.gouv UIC codes |
+| UIC8 SNCF | Strasbourg   | 00877123 | ref:FR:uic8                                |
+| Trigamme  | Paris-Est    | PE       | data.gouv trigramme, data.sncf             |
+| TT00020   | Strasbourg   | SG       | data.sncf TT00020                          |
+| RESARAIL  | Strasbourg   | FRAEG    | Trainline opendata                         |
+| IATA      | Paris Nord   | XPG      | Wikipedia IATA list                        |
 
 - Implémentation : Stockez tous les codes dans une table unique avec clé primaire UIC7 ; utilisez des champs optionnels pour les autres (ex. `code_iata`, `trigramme_sncf`). Automatisez les jointures via ETL sur sources open data (data.sncf.com, transport.data.gouv.fr).
 
 Gestion des gares sans code standard
-- Identification : Utilisez nom + coordonnées géo (Lambert 93/WGS84) + code INSEE commune comme identifiant provisoire (ex. nom="Gare X", code_insee="75056").
 
-- Procédure : 
+- Identification : Utilisez nom + coordonnées géo (Lambert 93/WGS84) + code INSEE commune comme identifiant provisoire (ex. nom="Gare X", code_insee="75056").
+- Procédure :
 
   - Vérifiez datasets exhaustifs (SNCF liste gares voyageurs/fret ~3000 sites).
-
   - Attribuez UIC via demande UIC ou SNCF si manquant ; sinon, générez trigramme interne (ex. basé sur nom abrégé).
-
   - Flaggez comme "à standardiser" dans base de données jusqu'à résolution.
-  
 - Sources pour complétude : OpenStreetMap pour mapping communautaire, data.sncf pour localisation précise.
