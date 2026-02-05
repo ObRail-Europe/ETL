@@ -3,37 +3,38 @@
 ## Endpoints de Collecte
 **Méthode : POST**
 
-| Endpoint | Description |
-|----------|-------------|
-| `/import/villes` | Données géographiques |
-| `/import/aeroports` | Données aéroports |
-| `/import/gares` | Référentiel des gares |
-| `/import/trajets/train` | Horaires et distances ferroviaires |
-| `/import/trajets/avion` | Vols et distances calculées |
+| Endpoint | Description | Format de réponse |
+|----------|-------------|-------------------|
+| `/import/villes` | Données géographiques | JSON: `{ "status": "success", "imported": number, "errors": [] }` |
+| `/import/aeroports` | Données aéroports | JSON: `{ "status": "success", "imported": number, "errors": [] }` |
+| `/import/gares` | Référentiel des gares | JSON: `{ "status": "success", "imported": number, "errors": [] }` |
+| `/import/trajets/train` | Horaires et distances ferroviaires | JSON: `{ "status": "success", "imported": number, "errors": [] }` |
+| `/import/trajets/avion` | Vols et distances calculées | JSON: `{ "status": "success", "imported": number, "errors": [] }` |
 
 ## Endpoints de Consultation
 **Méthode : GET**
 
-| Endpoint | Description |
-|----------|-------------|
-| `/villes` | Liste des villes |
-| `/gares/{id_ville}` | Liste toutes les gares de `{id_ville}` |
-| `/aeroports/{id_ville}` | Liste tous les aéroports de `{id_ville}` |
-| `/trajets/train` | Trajets de train avec filtres (départ, arrivée, est_jour, est_long) |
-| `/trajets/avion` | Trajets d'avion avec filtres de distance et d'horaires |
+| Endpoint | Paramètres | Description | Format de réponse |
+|----------|-----------|-------------|-------------------|
+| `/villes` | - | Liste des villes | JSON array, pagination (limit, offset) |
+| `/gares/{id_ville}` | `id_ville` | Liste toutes les gares de `{id_ville}` | JSON array, pagination (limit, offset) |
+| `/aeroports/{id_ville}` | `id_ville` | Liste tous les aéroports de `{id_ville}` | JSON array, pagination (limit, offset) |
+| `/trajets/train` | `ville_depart`, `ville_arrivee`, `est_jour` (booléen), `est_long` (booléen) | Trajets de train avec filtres | JSON array, pagination (limit, offset) |
+| `/trajets/avion` | `ville_depart`, `ville_arrivee`, `distance_min`, `distance_max`, `heure_min`, `heure_max` | Trajets d'avion avec filtres | JSON array, pagination (limit, offset) |
 
 ## Endpoints d'Analyse et Comparaison
 **Méthode : GET**
 
-| Endpoint | Paramètres | Sortie |
-|----------|-----------|--------|
-| `/comparaison/impact` | `ville_depart`, `ville_arrivee` | Comparaison CO2 entre meilleur trajet train et vol direct |
-| `/statistiques/maillage` | Aucun | Ratio couverture trains jour vs nuit |
-| `/statistiques/qualite` | - | Métriques du tableau de bord |
+| Endpoint | Paramètres | Sortie | Format de réponse |
+|----------|-----------|--------|-------------------|
+| `/comparaison/impact` | `ville_depart`, `ville_arrivee` | Comparaison CO2 entre meilleur trajet train et vol direct | JSON: `{ "train": object, "avion": object, "meilleur": string }` |
+| `/statistiques/maillage` | - | Ratio couverture trains jour vs nuit | JSON: `{ "jour": number, "nuit": number, "ratio": number }` |
+| `/statistiques/qualite` | - | Métriques du tableau de bord | JSON: `{ "metrics": [] }` |
 
 ## Endpoints de Référentiel Carbone
 **Méthode : GET**
 
-| Endpoint | Description |
-|----------|-------------|
-| `/emissions` | Liste des facteurs d'émission (code_carbone, emission) |
+| Endpoint | Paramètres | Description | Format de réponse |
+|----------|-----------|-------------|-------------------|
+| `/emissions` | `code_carbone` (optionnel), `type_transport` (optionnel) | Liste des facteurs d'émission filtrés | JSON array, pagination (limit, offset) |
+
