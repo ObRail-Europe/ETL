@@ -1,5 +1,9 @@
-pandas
-requests
+pyspark
 python-dotenv
-tqdm
+
+requests
+aiohttp
 aiofiles
+
+pandas
+openpyxl

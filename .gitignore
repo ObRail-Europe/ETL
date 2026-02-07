@@ -3,7 +3,7 @@
 venv/
 
 data/
-data_pres/
+logs/
 
 pycache/
 __pycache__/
