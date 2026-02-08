@@ -19,7 +19,7 @@ Pour son aspect structuré (bdd relationnel), la qualité, l'intégrité et l'in
 
 ## 2. Règles de Conversion (ETL)
 
-Le processus d'extraction et de transformation (ETL) doit appliquer les règles suivantes lors de l'ingestion des données sources :
+Le processus d'extraction et de transformation (ETL) doit appliquer les règles suivantes lors de l'extraction des données sources :
 
 * **Identification de la Source :** Détection automatique du fuseau horaire local de la gare de départ et de la gare d'arrivée basée sur le code pays ou les coordonnées géographiques.
 * **Normalisation :** Conversion systématique des heures locales fournies par les opérateurs (souvent sans offset explicite) vers le format UTC avant insertion en base.
