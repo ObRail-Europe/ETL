@@ -21,6 +21,7 @@ from extraction.extractors.backontrack_extractor import BackOnTrackExtractor
 from extraction.extractors.eea_extractor import EEAExtractor
 from extraction.extractors.ourairports_extractor import OurAirportsExtractor
 from extraction.extractors.mobilitydatabase_extractor import MobilityDatabaseExtractor
+from extraction.extractors.geonames_extractor import GeonamesExtractor
 
 
 class RawDataIngestor:
@@ -83,7 +84,8 @@ class RawDataIngestor:
             'backontrack': BackOnTrackExtractor,
             'eea': EEAExtractor,
             'ourairports': OurAirportsExtractor,
-            'mobility_database': MobilityDatabaseExtractor
+            'mobility_database': MobilityDatabaseExtractor,
+            'geonames': GeonamesExtractor
         }
 
         if sources is None:
