@@ -12,6 +12,7 @@ from typing import Any
 from datetime import datetime
 
 from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType
 from common.logging import SparkLogger, PerformanceMonitor
 from extraction.config.settings import ExtractionConfig
 
@@ -231,7 +232,11 @@ class BaseExtractor(ABC):
         self,
         csv_path: Path,
         parquet_path: Path | None = None,
-        delete_csv: bool = False
+        delete_csv: bool = False,
+        schema: StructType | None = None,
+        sep: str = ',',
+        header: bool = True,
+        inferSchema: bool = True
     ) -> Path:
         """
         Convertit un CSV en Parquet (format colonnaire plus rapide pour Spark).
@@ -244,6 +249,14 @@ class BaseExtractor(ABC):
             Chemin de sortie (défaut: None, remplace juste l'extension)
         delete_csv : bool, optional
             Supprime le CSV après conversion pour économiser l'espace (défaut: False)
+        schema : StructType, optional
+            Schéma explicite à utiliser (défaut: None, inféré si inferSchema=True)
+        sep : str, optional
+            Séparateur de colonnes (défaut: ',')
+        header : bool, optional
+            Indique si le CSV a une ligne d'en-tête (défaut: True)
+        inferSchema : bool, optional
+            Infère le schéma si aucun n'est fourni (défaut: True)
 
         Returns
         -------
@@ -258,14 +271,20 @@ class BaseExtractor(ABC):
         if parquet_path is None:
             parquet_path = csv_path.with_suffix('.parquet')
 
-        self.logger.debug(f"Conversion CSV en Parquet de {self.__class__.__name__.replace("Extractor", "")}:{csv_path.name}")
+        self.logger.debug(f"Conversion CSV en Parquet de {self.__class__.__name__.replace('Extractor', '')}:{csv_path.name}")
 
-        # lecture avec inférence automatique des types
-        df = self.spark.read.csv(
-            str(csv_path),
-            header=True,
-            inferSchema=True
-        )
+        read_args: dict[str, Any] = {
+            'path': str(csv_path),
+            'sep': sep,
+            'header': header
+        }
+        if schema is not None:
+            read_args['schema'] = schema
+            read_args['inferSchema'] = False
+        else:
+            read_args['inferSchema'] = inferSchema
+
+        df = self.spark.read.csv(**read_args)
 
         # écriture en Parquet avec compression (snappy par défaut)
         df.write.mode(self.config.SAVE_MODE).parquet(

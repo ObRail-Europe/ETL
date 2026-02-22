@@ -39,14 +39,42 @@ class GeonamesExtractor(BaseExtractor):
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extract(self.CSV_FILENAME, path=output_dir)
 
-        # Conversion en Parquet
-        parquet_path = self._save_as_parquet(csv_path)
+        # Conversion en Parquet avec schéma explicite (pas d'en-tête, séparateur tab)
+        from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, LongType
+        schema = StructType([
+            StructField("geonameid", LongType(), False),
+            StructField("name", StringType(), False),
+            StructField("asciiname", StringType(), True),
+            StructField("alternatenames", StringType(), True),
+            StructField("latitude", DoubleType(), False),
+            StructField("longitude", DoubleType(), False),
+            StructField("feature_class", StringType(), True),
+            StructField("feature_code", StringType(), True),
+            StructField("country_code", StringType(), False),
+            StructField("cc2", StringType(), True),
+            StructField("admin1_code", StringType(), True),
+            StructField("admin2_code", StringType(), True),
+            StructField("admin3_code", StringType(), True),
+            StructField("admin4_code", StringType(), True),
+            StructField("population", LongType(), False),
+            StructField("elevation", IntegerType(), True),
+            StructField("dem", IntegerType(), True),
+            StructField("timezone", StringType(), True),
+            StructField("modification_date", StringType(), True)
+        ])
+        parquet_path = self._save_as_parquet(
+            csv_path,
+            parquet_path=None,
+            delete_csv=False,
+            schema=schema,
+            sep='\t',
+            header=False,
+            inferSchema=False
+        )
 
         files_downloaded = 2  # zip + txt
         total_size_bytes = self._get_file_size(zip_path) + self._get_file_size(csv_path)
         output_paths = [str(csv_path), str(parquet_path)]
-
-        
 
         return {
             "files_downloaded": files_downloaded,
