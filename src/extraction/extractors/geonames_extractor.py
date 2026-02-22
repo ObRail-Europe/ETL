@@ -12,9 +12,9 @@ class GeonamesExtractor(BaseExtractor):
     """
     Extracteur pour la base Geonames cities15000.zip.
     """
-    URL = "https://download.geonames.org/export/dump/cities15000.zip"
-    FILENAME = "cities15000.zip"
-    CSV_FILENAME = "cities15000.txt"
+    URL = "https://download.geonames.org/export/dump/cities1000.zip"
+    FILENAME = "cities1000.zip"
+    CSV_FILENAME = "cities1000.txt"
 
     def get_source_name(self) -> str:
         return "geonames"
