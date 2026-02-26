@@ -273,7 +273,7 @@ class PerformanceMonitor:
             Identifiant unique de l'opération
         """
         self.start_times[operation] = datetime.now()
-        self.logger.debug(f"Démmarage du moniteur pour `{operation}`")
+        self.logger.debug(f"Démarage du moniteur pour `{operation}`")
 
     def stop(self, operation: str) -> float:
         """
@@ -283,9 +283,7 @@ class PerformanceMonitor:
         ----------
         operation : str
             Identifiant de l'opération (doit correspondre au start())
-        operation_name : str, optional
-            Nom lisible pour le log (défaut: 'Opération')
-
+        
         Returns
         -------
         float

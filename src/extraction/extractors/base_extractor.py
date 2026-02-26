@@ -292,12 +292,6 @@ class BaseExtractor(ABC):
             compression=self.config.PARQUET_COMPRESSION
         )
 
-        # supprime le CSV original si demandé (économie d'espace disque)
-        if delete_csv and csv_path.exists():
-            csv_path.unlink()
-            self.logger.debug(f"CSV supprimé: {csv_path.name}")
-
-
         parquet_size = self._get_file_size(parquet_path)
         csv_size = self._get_file_size(csv_path)
         if csv_size > 0:
@@ -306,5 +300,10 @@ class BaseExtractor(ABC):
         else:
             compression_str = " (compression: N/A)"
         self.logger.debug(f"Conversion en parquet de {self.__class__.__name__.replace('Extractor', '')}:{parquet_path.name} terminée: {self._format_size(parquet_size)}" + compression_str)
+
+        # supprime le CSV original si demandé (économie d'espace disque)
+        if delete_csv and csv_path.exists():
+            csv_path.unlink()
+            self.logger.debug(f"CSV supprimé: {csv_path.name}")
 
         return parquet_path
