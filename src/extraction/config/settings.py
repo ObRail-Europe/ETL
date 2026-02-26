@@ -29,11 +29,6 @@ class ExtractionConfig(BaseConfig):
     BACKONTRACK_SPREADSHEET_ID = "15zsK-lBuibUtZ1s2FxVHvAmSu-pEuE0NDT6CAMYL2TY"
     BACKONTRACK_OUTPUT_DIR = RAW_DATA_PATH / "back_on_track"
 
-    # EEA - facteurs d'émission CO2 par mode de transport (CSV direct)
-    EEA_URL = "https://sdi.eea.europa.eu/datashare/s/JNfX8GiTPEprBcS/download"
-    EEA_OUTPUT_DIR = RAW_DATA_PATH / "eea"
-    EEA_FILENAME = "eea_co2_intensity.csv"
-
     # OurAirports - référentiel mondial des aéroports (CSV publics)
     OURAIRPORTS_BASE_URL =  "https://davidmegginson.github.io/ourairports-data"
     OURAIRPORTS_OUTPUT_DIR = RAW_DATA_PATH / "ourairports"
@@ -58,6 +53,20 @@ class ExtractionConfig(BaseConfig):
     MOBILITY_MAX_CONCURRENT = int(os.getenv("MOBILITY_MAX_CONCURRENT", "20"))  # 20 téléchargements en parallèle max
     MOBILITY_CHUNK_SIZE = int(os.getenv("MOBILITY_CHUNK_SIZE", "1048576"))  # 1MB par chunk pour le streaming
     
+    # Ember - données d'intensité carbone (gCO₂/kWh) par pays et année
+    EMBER_API_BASE_URL = "https://api.ember-energy.org/v1/carbon-intensity/yearly"
+    EMBER_API_KEY = os.getenv("EMBER_API_KEY")
+    EMBER_OUTPUT_DIR = RAW_DATA_PATH / "ember"
+    EMBER_FILENAME = "ember_carbon_intensity.csv"
+    # Années à extraire pour Ember
+    EMBER_YEARS = [2013, 2014, 2015, 2016, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+
+    # Geonames - référentiel géographique mondial des villes (ZIP contenant CSV)
+    GEONAMES_URL = "https://download.geonames.org/export/dump/cities1000.zip"
+    GEONAMES_OUTPUT_DIR = RAW_DATA_PATH / "geonames"
+    GEONAMES_ZIP_FILENAME = "cities1000.zip"
+    GEONAMES_CSV_FILENAME = "cities1000.txt"
+    
     @classmethod
     def validate(cls) -> None:
         """
@@ -75,17 +84,22 @@ class ExtractionConfig(BaseConfig):
         # crée tous les dossiers de sortie pour chaque source
         cls.RAW_DATA_PATH.mkdir(parents=True, exist_ok=True)
         cls.BACKONTRACK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        cls.EEA_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cls.OURAIRPORTS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cls.MOBILITY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        # Ajout du dossier Ember
-        (cls.RAW_DATA_PATH / "ember").mkdir(parents=True, exist_ok=True)
+        cls.EMBER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        cls.GEONAMES_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        # warn si le token Mobility Database manque - cette source sera skippée
+        # warn si les tokens API manquent - ces sources seront skippées
         if not cls.MOBILITY_API_REFRESH_TOKEN:
             print(
                 "WARNING: MOBILITY_API_REFRESH_TOKEN non défini. "
                 "L'extraction Mobility Database sera ignorée."
+            )
+        
+        if not cls.EMBER_API_KEY:
+            print(
+                "WARNING: EMBER_API_KEY non défini. "
+                "L'extraction Ember sera ignorée."
             )
 
 

@@ -9,7 +9,6 @@ Télécharge les données pour les années spécifiées et les sauvegarde en Par
 import requests
 from pathlib import Path
 from typing import Any
-import os
 
 from .base_extractor import BaseExtractor
 
@@ -27,7 +26,7 @@ class EmberExtractor(BaseExtractor):
     def extract(self) -> dict[str, Any]:
         self.logger.info("Extraction des données Ember (intensité carbone annuelle)...")
 
-        api_key = os.getenv("EMBER_API_KEY")
+        api_key = self.config.EMBER_API_KEY
         if not api_key:
             raise RuntimeError("La variable d'environnement EMBER_API_KEY doit être définie pour accéder à l'API Ember.")
 
@@ -35,11 +34,10 @@ class EmberExtractor(BaseExtractor):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Années à extraire
-        years = [2013, 2014, 2015, 2016, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
-        # (2024 et 2025 ajoutées, 2017-2018 non demandées)
+        years = self.config.EMBER_YEARS
 
         # API endpoint
-        base_url = "https://api.ember-energy.org/v1/carbon-intensity/yearly"
+        base_url = self.config.EMBER_API_BASE_URL
 
         # On récupère toutes les entités (pays) disponibles
         # (optionnel: on pourrait filtrer sur l'UE ou un sous-ensemble)
@@ -85,7 +83,7 @@ class EmberExtractor(BaseExtractor):
 
         # Sauvegarde CSV intermédiaire
         import csv
-        csv_path = output_dir / "ember_carbon_intensity.csv"
+        csv_path = output_dir / self.config.EMBER_FILENAME
         with open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=filtered[0].keys()) # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
             writer.writeheader()

@@ -107,7 +107,7 @@ class BackOnTrackExtractor(BaseExtractor):
             df.to_csv(csv_path, index=False, encoding='utf-8')
 
             # conversion en Parquet pour optimiser les performances Spark
-            parquet_path = self._save_as_parquet(csv_path, delete_csv=False)
+            parquet_path = self._save_as_parquet(csv_path, delete_csv=True)
 
             output_paths.append(str(parquet_path))
             total_rows += len(df)
