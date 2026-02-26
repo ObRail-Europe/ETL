@@ -1,3 +1,11 @@
-pandas
-requests
+pyspark
 python-dotenv
+
+requests
+aiohttp
+aiofiles
+
+pandas
+openpyxl
+pyarrow
+pycountry

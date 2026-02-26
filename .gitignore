@@ -3,4 +3,11 @@
 venv/
 
 data/
-data_pres/
+logs/
+
+pycache/
+__pycache__/
+
+.vscode/
+
+analyse/processed/
