@@ -82,7 +82,7 @@ class BackOnTrackExtractor(BaseExtractor):
 
         # parse le fichier Excel en mémoire (pas besoin de sauvegarder le .xlsx)
         try:
-            all_sheets: dict[str, pd.DataFrame] = pd.read_excel(  # type: ignore
+            all_sheets: dict[str, pd.DataFrame] = pd.read_excel(  # pyright: ignore[reportUnknownMemberType]
                 BytesIO(response.content),
                 sheet_name=None,  # charge toutes les feuilles d'un coup
                 engine='openpyxl'

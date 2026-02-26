@@ -90,7 +90,7 @@ class SparkLogger:
         self.spark_logger = None
         if spark:
             try:
-                jvm: Any = spark._jvm # type: ignore
+                jvm: Any = spark._jvm  # pyright: ignore[reportPrivateUsage]
                 log4j = jvm.org.apache.log4j
                 self.spark_logger = log4j.LogManager.getLogger(name)
 

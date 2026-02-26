@@ -297,7 +297,14 @@ class BaseExtractor(ABC):
             csv_path.unlink()
             self.logger.debug(f"CSV supprimé: {csv_path.name}")
 
-        self.logger.debug(f"Conversion en parquet de {self.__class__.__name__.replace('Extractor', '')}:{parquet_path.name} terminée: {self._format_size(self._get_file_size(parquet_path))}"
-                          f" (compression: ~{100 - (100 * self._get_file_size(parquet_path) / self._get_file_size(csv_path)):.1f}%)")
+
+        parquet_size = self._get_file_size(parquet_path)
+        csv_size = self._get_file_size(csv_path)
+        if csv_size > 0:
+            compression = 100 - (100 * parquet_size / csv_size)
+            compression_str = f" (compression: ~{compression:.1f}%)"
+        else:
+            compression_str = " (compression: N/A)"
+        self.logger.debug(f"Conversion en parquet de {self.__class__.__name__.replace('Extractor', '')}:{parquet_path.name} terminée: {self._format_size(parquet_size)}" + compression_str)
 
         return parquet_path

@@ -78,6 +78,8 @@ class ExtractionConfig(BaseConfig):
         cls.EEA_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cls.OURAIRPORTS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cls.MOBILITY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        # Ajout du dossier Ember
+        (cls.RAW_DATA_PATH / "ember").mkdir(parents=True, exist_ok=True)
 
         # warn si le token Mobility Database manque - cette source sera skippée
         if not cls.MOBILITY_API_REFRESH_TOKEN:

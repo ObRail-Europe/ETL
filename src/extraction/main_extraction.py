@@ -18,7 +18,6 @@ from common.config import BaseConfig
 from extraction.extractors.base_extractor import BaseExtractor
 from extraction.config.settings import ExtractionConfig
 from extraction.extractors.backontrack_extractor import BackOnTrackExtractor
-from extraction.extractors.eea_extractor import EEAExtractor
 from extraction.extractors.ourairports_extractor import OurAirportsExtractor
 from extraction.extractors.mobilitydatabase_extractor import MobilityDatabaseExtractor
 from extraction.extractors.geonames_extractor import GeonamesExtractor
@@ -80,12 +79,13 @@ class RawDataIngestor:
         """
         # 4 sources dispo : backontrack (trains nuit), eea (émissions),
         # ourairports (aéroports EU), mobility_database (feeds GTFS)
+        from extraction.extractors.ember_extractor import EmberExtractor
         available_extractors: dict[str, type[BaseExtractor]] = {
             'backontrack': BackOnTrackExtractor,
-            'eea': EEAExtractor,
             'ourairports': OurAirportsExtractor,
             'mobility_database': MobilityDatabaseExtractor,
-            'geonames': GeonamesExtractor
+            'geonames': GeonamesExtractor,
+            'ember': EmberExtractor
         }
 
         if sources is None:

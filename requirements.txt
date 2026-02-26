@@ -7,3 +7,5 @@ aiofiles
 
 pandas
 openpyxl
+pyarrow
+pycountry
