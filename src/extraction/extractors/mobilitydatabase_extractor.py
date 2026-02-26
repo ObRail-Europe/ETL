@@ -17,6 +17,54 @@ from datetime import datetime
 
 from .base_extractor import BaseExtractor
 
+ALLOWED_FEEDS: frozenset[str] = frozenset({
+    "AT:mdb-1832", "AT:mdb-2138", "AT:mdb-770", "AT:mdb-783", "AT:mdb-900", "AT:mdb-914",
+    "CZ:mdb-1082", "CZ:mdb-767", "CZ:mdb-771",
+    "DE:mdb-1085", "DE:mdb-1091", "DE:mdb-1092", "DE:mdb-1094", "DE:mdb-1139",
+    "DE:mdb-1172", "DE:mdb-1173", "DE:mdb-1224", "DE:mdb-1225", "DE:mdb-1226",
+    "DE:mdb-2231", "DE:mdb-2393", "DE:mdb-2651", "DE:mdb-2661", "DE:mdb-2899",
+    "DE:mdb-772", "DE:mdb-778", "DE:mdb-780", "DE:mdb-781", "DE:mdb-782",
+    "DE:mdb-784", "DE:mdb-785", "DE:mdb-858", "DE:mdb-906",
+    "DE:tdg-82199", "DE:tfs-213",
+    "DK:mdb-1077",
+    "EE:mdb-1095", "EE:mdb-2015", "EE:mdb-2337",
+    "ES:mdb-1003", "ES:mdb-1064", "ES:mdb-1065", "ES:mdb-1079", "ES:mdb-1205",
+    "ES:mdb-1259", "ES:mdb-1782", "ES:mdb-1856", "ES:mdb-2141", "ES:mdb-2620",
+    "ES:mdb-2653", "ES:mdb-2715", "ES:mdb-2717", "ES:mdb-2720", "ES:mdb-2766",
+    "ES:mdb-2785", "ES:mdb-2826", "ES:mdb-2827", "ES:mdb-2832", "ES:mdb-790",
+    "ES:tfs-655",
+    "FI:mdb-865",
+    "FR:mdb-1026", "FR:mdb-1069", "FR:mdb-1153", "FR:mdb-1258", "FR:mdb-1260",
+    "FR:mdb-1283", "FR:mdb-1291", "FR:mdb-1783", "FR:mdb-1837", "FR:mdb-2144",
+    "FR:mdb-845", "FR:tdg-11681", "FR:tdg-67595", "FR:tdg-79818", "FR:tdg-80921",
+    "FR:tdg-80931", "FR:tdg-81474", "FR:tdg-81559", "FR:tdg-81942", "FR:tdg-81969",
+    "FR:tdg-82285", "FR:tdg-82386", "FR:tdg-83021", "FR:tdg-83448", "FR:tdg-83582",
+    "FR:tdg-83620", "FR:tdg-83634", "FR:tdg-83647", "FR:tdg-83675",
+    "FR:tfs-413", "FR:tld-725",
+    "GB:mdb-2364", "GB:mdb-2431", "GB:tld-5901",
+    "GR:mdb-1161",
+    "HR:mdb-2920", "HR:mdb-769",
+    "HU:mdb-990", "HU:tfs-42", "HU:tfs-625",
+    "IE:mdb-2637", "IE:mdb-955",
+    "IT:mdb-1031", "IT:mdb-1052", "IT:mdb-1058", "IT:mdb-1075", "IT:mdb-1089",
+    "IT:mdb-1142", "IT:mdb-1170", "IT:mdb-1230", "IT:mdb-1266", "IT:mdb-1319",
+    "IT:mdb-2610", "IT:mdb-2997", "IT:mdb-840", "IT:mdb-855", "IT:mdb-895",
+    "IT:tdg-81653", "IT:tfs-1011", "IT:tfs-542", "IT:tfs-664",
+    "IT:tld-4833", "IT:tld-958",
+    "LT:mdb-2991",
+    "LU:mdb-1108",
+    "NL:mdb-1859", "NL:mdb-686", "NL:mdb-768",
+    "NO:mdb-1078",
+    "PL:mdb-1008", "PL:mdb-1011", "PL:mdb-1290", "PL:mdb-1321", "PL:mdb-1908",
+    "PL:mdb-2087", "PL:mdb-2088", "PL:mdb-2091", "PL:mdb-2092", "PL:mdb-853",
+    "PL:mdb-863", "PL:tfs-789", "PL:tfs-790", "PL:tld-5701",
+    "PT:mdb-1034", "PT:mdb-2057", "PT:tld-715",
+    "RO:mdb-1104",
+    "RS:mdb-2927",
+    "SE:mdb-1292", "SE:mdb-1320",
+    "SI:mdb-2940",
+    "SK:mdb-2155",
+})
 
 class MobilityDatabaseExtractor(BaseExtractor):
     """
@@ -149,9 +197,18 @@ class MobilityDatabaseExtractor(BaseExtractor):
                     'total_size_bytes': 0,
                     'output_paths': []
                 }
+            
+
+            
+            def _get_feed_key(feed: dict[str, Any]) -> str:
+                locations: list[dict[str, str]] = feed.get('locations') or []
+                country = locations[0].get('country_code', 'XX').upper() if locations else 'XX'
+                return f"{country}:{feed.get('id', '')}"
+            
+            feeds = [feed for feed in feeds if _get_feed_key(feed) in ALLOWED_FEEDS]
 
             stats['total'] = len(feeds)
-            self.logger.info(f"Téléchargement de {len(feeds)} feeds GTFS depuis Mobility Database...")
+            self.logger.info(f"Téléchargement de {len(feeds)} feeds validé GTFS depuis Mobility Database...")
 
             # étape 3 : téléchargement en parallèle avec limite de concurrence
             results = await self._download_all_feeds(
