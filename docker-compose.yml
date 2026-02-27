@@ -1,0 +1,15 @@
+services:
+  etl:
+    build: .
+    env_file: .env
+    environment:
+      # Surcharge le JAVA_HOME macOS du .env avec le chemin Linux du conteneur
+      JAVA_HOME: /usr/lib/jvm/default-java
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+# Utilisation :
+#   Toutes les phases    : docker compose run --rm etl
+#   Extraction seulement : docker compose run --rm etl --phases extraction
+#   Rebuild l'image      : docker compose build
