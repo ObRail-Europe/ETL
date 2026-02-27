@@ -200,12 +200,12 @@ class MobilityDatabaseExtractor(BaseExtractor):
             
 
             
-            def _get_feed_key(feed: dict[str, Any]) -> str:
-                locations: list[dict[str, str]] = feed.get('locations') or []
-                country = locations[0].get('country_code', 'XX').upper() if locations else 'XX'
-                return f"{country}:{feed.get('id', '')}"
+            # def _get_feed_key(feed: dict[str, Any]) -> str:
+            #    locations: list[dict[str, str]] = feed.get('locations') or []
+            #    country = locations[0].get('country_code', 'XX').upper() if locations else 'XX'
+            #    return f"{country}:{feed.get('id', '')}"
             
-            feeds = [feed for feed in feeds if _get_feed_key(feed) in ALLOWED_FEEDS]
+            # feeds = [feed for feed in feeds if _get_feed_key(feed) in ALLOWED_FEEDS]
 
             stats['total'] = len(feeds)
             self.logger.info(f"Téléchargement de {len(feeds)} feeds validé GTFS depuis Mobility Database...")
