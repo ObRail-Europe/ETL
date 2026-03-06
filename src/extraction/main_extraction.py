@@ -80,12 +80,14 @@ class RawDataIngestor:
         # 4 sources dispo : backontrack (trains nuit), eea (émissions),
         # ourairports (aéroports EU), mobility_database (feeds GTFS)
         from extraction.extractors.ember_extractor import EmberExtractor
+        from extraction.extractors.ademe_extractor import AdemeExtractor
         available_extractors: dict[str, type[BaseExtractor]] = {
             'backontrack': BackOnTrackExtractor,
             'ourairports': OurAirportsExtractor,
             'mobility_database': MobilityDatabaseExtractor,
             'geonames': GeonamesExtractor,
-            'ember': EmberExtractor
+            'ember': EmberExtractor,
+            'ademe': AdemeExtractor,
         }
 
         if sources is None:

@@ -35,7 +35,8 @@ class ExtractionConfig(BaseConfig):
     OURAIRPORTS_FILES: dict[str, str] = {
         "airports": "airports.csv",
         "countries": "countries.csv",
-        "regions": "regions.csv"
+        "regions": "regions.csv",
+        "runways": "runways.csv",
     }
 
     # Mobility Database - flux GTFS des réseaux de transport européens (API avec token gratuit)
@@ -66,6 +67,13 @@ class ExtractionConfig(BaseConfig):
     GEONAMES_OUTPUT_DIR = RAW_DATA_PATH / "geonames"
     GEONAMES_ZIP_FILENAME = "cities1000.zip"
     GEONAMES_CSV_FILENAME = "cities1000.txt"
+
+    # ADEME Base Carbone - facteurs d'émission transport aérien (API publique, sans authentification)
+    ADEME_API_BASE_URL = "https://data.ademe.fr/data-fair/api/v1/datasets/base-carboner/lines"
+    ADEME_OUTPUT_DIR = RAW_DATA_PATH / "ademe"
+    ADEME_CATEGORY_FILTER = "Transport de personnes > Aérien"  # catégorie cible dans la Base Carbone
+    ADEME_PAGE_SIZE = 500
+    ADEME_FILENAME = "ademe_base_carbone_aerien.csv"
     
     @classmethod
     def validate(cls) -> None:
@@ -88,6 +96,7 @@ class ExtractionConfig(BaseConfig):
         cls.MOBILITY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cls.EMBER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         cls.GEONAMES_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        cls.ADEME_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
         # warn si les tokens API manquent - ces sources seront skippées
         if not cls.MOBILITY_API_REFRESH_TOKEN:
