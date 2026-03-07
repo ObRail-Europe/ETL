@@ -12,9 +12,6 @@ class GeonamesExtractor(BaseExtractor):
     """
     Extracteur pour la base Geonames cities15000.zip.
     """
-    URL = "https://download.geonames.org/export/dump/cities1000.zip"
-    FILENAME = "cities1000.zip"
-    CSV_FILENAME = "cities1000.txt"
 
     def get_source_name(self) -> str:
         return "geonames"
@@ -24,12 +21,12 @@ class GeonamesExtractor(BaseExtractor):
 
     def extract(self) -> dict[str, int | list[str]]:
         output_dir = self.output_dir
-        zip_path = output_dir / self.FILENAME
-        csv_path = output_dir / self.CSV_FILENAME
+        zip_path = output_dir / self.config.GEONAMES_ZIP_FILENAME
+        csv_path = output_dir / self.config.GEONAMES_CSV_FILENAME
 
         # Téléchargement
-        self.logger.info(f"Téléchargement de {self.URL}")
-        response = requests.get(self.URL, stream=True)
+        self.logger.info(f"Téléchargement de {self.config.GEONAMES_URL}")
+        response = requests.get(self.config.GEONAMES_URL, stream=True)
         response.raise_for_status()
         with open(zip_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -37,7 +34,7 @@ class GeonamesExtractor(BaseExtractor):
 
         self.logger.info(f"Décompression de {zip_path}")
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extract(self.CSV_FILENAME, path=output_dir)
+            zip_ref.extract(self.config.GEONAMES_CSV_FILENAME, path=output_dir)
 
         # Conversion en Parquet avec schéma explicite (pas d'en-tête, séparateur tab)
         from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType, LongType
@@ -65,7 +62,7 @@ class GeonamesExtractor(BaseExtractor):
         parquet_path = self._save_as_parquet(
             csv_path,
             parquet_path=None,
-            delete_csv=False,
+            delete_csv=True,
             schema=schema,
             sep='\t',
             header=False,
