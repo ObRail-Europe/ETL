@@ -138,7 +138,7 @@ class OurAirportsExtractor(BaseExtractor):
             df.to_csv(output_path, index=False, encoding='utf-8')
 
             # conversion en Parquet pour optimiser les performances Spark
-            parquet_path = self._save_as_parquet(output_path, delete_csv=False)
+            parquet_path = self._save_as_parquet(output_path, delete_csv=True)
             file_size = self._get_file_size(parquet_path)
 
             return {

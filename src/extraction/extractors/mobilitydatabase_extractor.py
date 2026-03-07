@@ -204,7 +204,7 @@ class MobilityDatabaseExtractor(BaseExtractor):
                 locations: list[dict[str, str]] = feed.get('locations') or []
                 country = locations[0].get('country_code', 'XX').upper() if locations else 'XX'
                 return f"{country}:{feed.get('id', '')}"
-            
+
             feeds = [feed for feed in feeds if _get_feed_key(feed) in ALLOWED_FEEDS]
 
             stats['total'] = len(feeds)
