@@ -1,11 +1,9 @@
 """
-Pipeline ETL globale ObRail Europe - orchestrateur des 3 phases.
+Pipeline ETL globale ObRail Europe - orchestrateur des 3 phases
 
-1. Extraction : télécharge les données brutes (4 sources : backontrack, eea, ourairports, mobility_database)
-2. Transformation : nettoie, normalise, croise les données (pas encore implémenté)
-3. Chargement : agrège pour l'API finale (pas encore implémenté)
-
-Seule l'extraction est opérationnelle pour l'instant.
+1. Extraction : télécharge les données brutes (6 sources : backontrack, ember, ourairports, geonames, ademe, mobility_database)
+2. Transformation : nettoie, normalise et construit le schéma en étoile
+3. Chargement : agrège pour l'API finale
 """
 
 import sys
@@ -97,25 +95,27 @@ class ETLPipeline:
 
     def run_transformation(self) -> dict[str, Any]:
         """
-        Lance la phase 2 - nettoyage et normalisation.
+        Lance la phase 2 - nettoyage, normalisation et construction du schéma en étoile.
 
         Returns
         -------
         dict[str, Any]
-            Statut de la transformation (SKIPPED pour l'instant)
-
-        Notes
-        -----
-        Pas encore implémenté. Devra nettoyer les doublons, harmoniser les formats
-        (codes gares, fuseaux horaires), croiser GTFS avec Back-on-Track.
+            Résultat de la transformation avec statut et métriques par transformateur
         """
         self.logger.log_section("PHASE 2 : TRANSFORMATION", level="INFO")
-        self.logger.info("Transformation non encore implémentée")
 
-        return {
-            'status': 'SKIPPED',
-            'message': 'Module de transformation non encore implémenté'
-        }
+        from transformation.main_transformation import DataTransformer
+        from transformation.config.settings import TransformationConfig
+
+        transformer = DataTransformer(
+            spark=self.spark,
+            spark_manager=self.spark_manager,
+            logger=self.logger.get_child("Transformation"),
+            config=self.config,
+            transformation_config=TransformationConfig()
+        )
+
+        return transformer.run()
 
     def run_loading(self) -> dict[str, Any]:
         """

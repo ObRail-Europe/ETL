@@ -35,7 +35,8 @@ class ExtractionConfig(BaseConfig):
     OURAIRPORTS_FILES: dict[str, str] = {
         "airports": "airports.csv",
         "countries": "countries.csv",
-        "regions": "regions.csv"
+        "regions": "regions.csv",
+        "runways": "runways.csv",
     }
 
     # Mobility Database - flux GTFS des réseaux de transport européens (API avec token gratuit)
