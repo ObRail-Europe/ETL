@@ -75,7 +75,7 @@ class GoldAggregator:
         dict avec clés : train_trip, flight, localite, emission, stop_matching
         """
         cfg = self.config
-        self.logger.info("Chargement des parquets silver...")
+        self.logger.debug("Chargement des parquets silver...")
 
         dfs: dict[str, DataFrame] = {
             "train_trip":    self.spark.read.parquet(str(cfg.TRAIN_TRIP_PATH)),
@@ -85,8 +85,8 @@ class GoldAggregator:
             "stop_matching": self.spark.read.parquet(str(cfg.STOP_MATCHING_PATH)),
         }
 
-        for name, df in dfs.items():
-            self.logger.info(f"  ✓ {name} : {df.count():,} lignes")
+        for name in dfs:
+            self.logger.debug(f"Parquet silver chargé : {name}")
 
         return dfs
 
@@ -110,25 +110,33 @@ class GoldAggregator:
         4. Agrégation trip-level (route_id, agency…)
         5. Dédoublonnage par gare/ville/horaires + fusion days_of_week (OR bit à bit)
         """
-        self.logger.log_section("GOLD TRAIN – paires O/D", level="INFO")
+        self.logger.info("Début de l'agrégation gold train...")
         cfg = self.config
 
-        # 1) Enrichissement ville + emission
+        # 1) Enrichissement ville + emission (broadcast des tables de dimension)
+        df_loc_small = F.broadcast(
+            df_localite.select(
+                F.col("city_id").alias("loc_city_id"),
+                F.col("city_name"),
+                F.col("country_code"),
+            )
+        )
+        df_em_small = F.broadcast(
+            df_emission.select(
+                F.col("emission_ref").cast("long").alias("em_ref"),
+                F.col("emission_gCO2e_per_p_km").alias("co2_per_pkm"),
+            )
+        )
+
         df_enriched = (
             df_train_trip.alias("t")
             .join(
-                df_localite.select(
-                    F.col("city_id").alias("loc_city_id"),
-                    F.col("city_name"),
-                ).alias("l"),
+                df_loc_small.alias("l"),
                 F.col("t.city_id") == F.col("l.loc_city_id"),
                 "left",
             )
             .join(
-                df_emission.select(
-                    F.col("emission_ref").cast("long").alias("em_ref"),
-                    F.col("emission_gCO2e_per_p_km").alias("co2_per_pkm"),
-                ).alias("e"),
+                df_em_small.alias("e"),
                 F.col("t.emission_ref").cast("long") == F.col("e.em_ref"),
                 "left",
             )
@@ -151,30 +159,30 @@ class GoldAggregator:
                 ),
             )
             .repartition(cfg.GOLD_SHUFFLE_PARTITIONS, "source", "trip_id")
-            .persist()
+            .localCheckpoint(eager=True)
         )
 
-        self.logger.info(f"  Stops train total : {df_work.count():,}")
+        self.logger.debug("Checkpoint df_work matérialisé")
 
         # 3) Côtés départ et arrivée
         df_dep = df_work.select(
-            F.col("source").alias("trip_source"),
+            F.col("source"),
             F.col("trip_id"),
             F.col("stop_sequence").alias("dep_seq"),
             F.col("stop_name").alias("departure_station"),
             F.col("city_name").alias("departure_city"),
-            F.col("country_name").alias("departure_country"),
+            F.col("country_code").alias("departure_country"),
             F.col("departure_time"),
             F.col("parent_station").alias("departure_parent_station"),
             F.col("cumul_dist_m").alias("dep_cumul"),
         )
         df_arr = df_work.select(
-            F.col("source").alias("arr_source"),
-            F.col("trip_id").alias("_trip_id_arr"),
+            F.col("source"),
+            F.col("trip_id"),
             F.col("stop_sequence").alias("arr_seq"),
             F.col("stop_name").alias("arrival_station"),
             F.col("city_name").alias("arrival_city"),
-            F.col("country_name").alias("arrival_country"),
+            F.col("country_code").alias("arrival_country"),
             F.col("arrival_time"),
             F.col("parent_station").alias("arrival_parent_station"),
             F.col("cumul_dist_m").alias("arr_cumul"),
@@ -194,18 +202,12 @@ class GoldAggregator:
 
         # 5) Paires O/D
         df_pairs = (
-            df_dep.join(
-                df_arr,
-                (F.col("trip_source") == F.col("arr_source"))
-                & (F.col("trip_id") == F.col("_trip_id_arr"))
-                & (F.col("dep_seq") < F.col("arr_seq")),
-                "inner",
-            )
+            df_dep.join(df_arr, ["source", "trip_id"], "inner")
+            .filter(F.col("dep_seq") < F.col("arr_seq"))
             .withColumn("distance_km", F.round(
                 (F.col("arr_cumul") - F.col("dep_cumul")) / F.lit(1000.0), 2
             ))
-            .drop("arr_source", "_trip_id_arr", "dep_cumul", "arr_cumul", "dep_seq", "arr_seq")
-            .withColumnRenamed("trip_source", "source")
+            .drop("dep_cumul", "arr_cumul", "dep_seq", "arr_seq")
         )
 
         # 6) Dataset gold brut
@@ -231,11 +233,12 @@ class GoldAggregator:
         ]
 
         def merged_days_expr(col_name: str = "days_of_week") -> F.Column:
+            coalesced = F.coalesce(F.col(col_name), F.lit("0000000"))
             return F.concat(*[
                 F.max(
                     F.when(
-                        F.substring(F.coalesce(F.col(col_name), F.lit("0000000")), i, 1).isin("0", "1"),
-                        F.substring(F.coalesce(F.col(col_name), F.lit("0000000")), i, 1).cast("int"),
+                        F.substring(coalesced, i, 1) == F.lit("1"),
+                        F.lit(1),
                     ).otherwise(F.lit(0))
                 ).cast("string")
                 for i in range(1, 8)
@@ -257,24 +260,12 @@ class GoldAggregator:
             .groupBy(*dedup_keys)
             .agg(*agg_exprs)
             .select(self.GOLD_COLS)
+            .localCheckpoint(eager=True)
         )
 
-        df_work.unpersist()
+        # df_work n'est plus nécessaire (lineage coupée par localCheckpoint)
 
-        n_raw = df_raw.count()
-        n_gold = df_gold_train.count()
-        self.logger.info(f"  Gold train brut    : {n_raw:,}")
-        self.logger.info(f"  Gold train dédupé  : {n_gold:,}")
-
-        # Sauvegarde
-        (
-            df_gold_train
-            .coalesce(cfg.GOLD_COALESCE_TRAIN)
-            .write.mode("overwrite")
-            .parquet(str(cfg.GOLD_TRAIN_PATH))
-        )
-        self.logger.info(f"  ✓ Sauvegardé : {cfg.GOLD_TRAIN_PATH}")
-
+        self.logger.info("Agrégation gold train terminée.")
         return df_gold_train
 
     # ──────────────────────────────────────────────────────────────
@@ -293,17 +284,17 @@ class GoldAggregator:
         Labels de route construits depuis trajet_type (ex: small_large_1000km)
         → "Court courrier - Petit Aéroport vers Grand Aéroport"
         """
-        self.logger.log_section("GOLD FLIGHT – paires aéroport", level="INFO")
+        self.logger.info("Début de l'agrégation gold flight...")
         cfg = self.config
 
-        df_loc_origin = df_localite.select(
+        df_loc_origin = F.broadcast(df_localite.select(
             F.col("city_id").alias("origin_city_id_l"),
             F.col("city_name").alias("departure_city"),
-        )
-        df_loc_dest = df_localite.select(
+        ))
+        df_loc_dest = F.broadcast(df_localite.select(
             F.col("city_id").alias("dest_city_id_l"),
             F.col("city_name").alias("arrival_city"),
-        )
+        ))
 
         # Mapping libellés taille aéroport
         size_label = F.create_map(
@@ -324,10 +315,10 @@ class GoldAggregator:
             .join(df_loc_dest.alias("ld"),
                   F.col("f.dest_city_id") == F.col("ld.dest_city_id_l"), "left")
             .join(
-                df_emission.select(
+                F.broadcast(df_emission.select(
                     F.col("emission_ref").cast("long").alias("em_ref"),
                     F.col("emission_gCO2e_per_p_km").alias("co2_per_pkm"),
-                ).alias("e"),
+                )).alias("e"),
                 F.col("f.emission_ref").cast("long") == F.col("e.em_ref"),
                 "left",
             )
@@ -387,17 +378,7 @@ class GoldAggregator:
 
         df_gold_flight = df_gold_flight.select(self.GOLD_COLS)
 
-        n = df_gold_flight.count()
-        self.logger.info(f"  Gold flight : {n:,} lignes")
-
-        (
-            df_gold_flight
-            .coalesce(cfg.GOLD_COALESCE_FLIGHT)
-            .write.mode("overwrite")
-            .parquet(str(cfg.GOLD_FLIGHT_PATH))
-        )
-        self.logger.info(f"  ✓ Sauvegardé : {cfg.GOLD_FLIGHT_PATH}")
-
+        self.logger.info("Agrégation gold flight terminée.")
         return df_gold_flight
 
     # ──────────────────────────────────────────────────────────────
@@ -408,15 +389,16 @@ class GoldAggregator:
         self,
         df_gold_train: DataFrame,
         df_gold_flight: DataFrame,
-    ) -> DataFrame:
-        """Union des datasets train et avion dans un schéma commun."""
-        self.logger.log_section("GOLD AGG – union train + avion", level="INFO")
+    ) -> None:
+        """
+        Union des datasets train et avion dans un schéma commun.
+
+        Écrit directement le parquet gold aggloméré.
+        """
+        self.logger.info("Début de l'agrégation gold union...")
         cfg = self.config
 
         df_agg = df_gold_train.unionByName(df_gold_flight)
-
-        n = df_agg.count()
-        self.logger.info(f"  Gold aggloméré : {n:,} lignes")
 
         (
             df_agg
@@ -424,9 +406,9 @@ class GoldAggregator:
             .write.mode("overwrite")
             .parquet(str(cfg.GOLD_AGG_PATH))
         )
-        self.logger.info(f"  ✓ Sauvegardé : {cfg.GOLD_AGG_PATH}")
+        self.logger.debug(f"Sauvegardé : {cfg.GOLD_AGG_PATH}")
 
-        return df_agg
+        self.logger.info("Agrégation gold union terminée.")
 
     # ──────────────────────────────────────────────────────────────
     # 4. Candidats comparaison train vs avion
@@ -446,16 +428,17 @@ class GoldAggregator:
         - Candidat 1 : le train lui-même (0 correspondance)
         - Candidat 2 : le meilleur vol accessible depuis les gares (via stop_matching)
         """
-        self.logger.log_section("GOLD COMPARE – candidats", level="INFO")
+        self.logger.info("Début de la comparaison train vs avion...")
         cfg = self.config
 
-        # Utilitaire : HH:MM:SS → secondes
+        # Utilitaire : HH:MM:SS → secondes (tolère les formats incomplets)
         def hms_to_seconds(col_name: str) -> F.Column:
             parts = F.split(F.col(col_name), ":")
+            n = F.size(parts)
             return (
-                F.coalesce(parts.getItem(0).cast("int"), F.lit(0)) * F.lit(3600)
-                + F.coalesce(parts.getItem(1).cast("int"), F.lit(0)) * F.lit(60)
-                + F.coalesce(parts.getItem(2).cast("int"), F.lit(0))
+                F.coalesce(F.when(n >= 1, parts.getItem(0).cast("double").cast("int")), F.lit(0)) * F.lit(3600)
+                + F.coalesce(F.when(n >= 2, parts.getItem(1).cast("double").cast("int")), F.lit(0)) * F.lit(60)
+                + F.coalesce(F.when(n >= 3, parts.getItem(2).cast("double").cast("int")), F.lit(0))
             )
 
         sec_in_day = F.lit(24 * 3600)
@@ -490,14 +473,14 @@ class GoldAggregator:
             .withColumn("comparison_emissions_co2", F.col("emissions_co2"))
         )
 
-        # Meilleur vol par paire d'aéroports
+        # Meilleur vol par paire d'aéroports (broadcast emission)
         df_flight_enriched = (
             df_flight.alias("f")
             .join(
-                df_emission.select(
+                F.broadcast(df_emission.select(
                     F.col("emission_ref").cast("long").alias("em_ref"),
                     F.col("emission_gCO2e_per_p_km").alias("co2_per_pkm"),
-                ).alias("e"),
+                )).alias("e"),
                 F.col("f.emission_ref").cast("long") == F.col("e.em_ref"),
                 "left",
             )
@@ -529,17 +512,17 @@ class GoldAggregator:
             .drop("rn")
         )
 
-        # Candidat 2 – vol depuis gare proche (via stop_matching)
-        df_match_dep = df_stop_matching.select(
+        # Candidat 2 – vol depuis gare proche (via stop_matching, broadcast)
+        df_match_dep = F.broadcast(df_stop_matching.select(
             F.col("gare_id").alias("dep_gare_id"),
             F.col("airport_id").alias("dep_airport_id"),
             F.col("distance_km").alias("dep_access_km"),
-        )
-        df_match_arr = df_stop_matching.select(
+        ))
+        df_match_arr = F.broadcast(df_stop_matching.select(
             F.col("gare_id").alias("arr_gare_id"),
             F.col("airport_id").alias("arr_airport_id"),
             F.col("distance_km").alias("arr_access_km"),
-        )
+        ))
 
         _norm_cols = [
             "source", "trip_id",
@@ -591,65 +574,142 @@ class GoldAggregator:
         df_cmp_train_norm = df_cmp_train.select(_norm_cols)
         df_candidates = df_cmp_train_norm.unionByName(df_cmp_flight)
 
-        n = df_candidates.count()
-        self.logger.info(f"  Candidats comparaison : {n:,}")
-
-        (
-            df_candidates
-            .coalesce(cfg.GOLD_COALESCE_CANDIDATES)
-            .write.mode("overwrite")
-            .parquet(str(cfg.GOLD_COMPARE_CANDIDATES_PATH))
-        )
-        self.logger.info(f"  ✓ Sauvegardé : {cfg.GOLD_COMPARE_CANDIDATES_PATH}")
-
+        self.logger.info("Comparaison train vs avion terminée.")
         return df_candidates
 
     # ──────────────────────────────────────────────────────────────
     # 5. Meilleure option par O/D
     # ──────────────────────────────────────────────────────────────
 
-    def build_compare_best(self, df_candidates: DataFrame) -> DataFrame:
+    def build_compare_best(
+        self,
+        df_candidates: DataFrame,
+        df_gold_agg: DataFrame,
+    ) -> DataFrame:
         """
-        Sélectionne la meilleure option par paire O/D.
+        Construit la table de comparaison train vs avion (dans les deux sens).
 
-        Critères (dans l'ordre) :
-        1. Durée la plus courte (asc_nulls_last)
-        2. Moins de correspondances
-        3. Moins d'émissions CO2
+        Pour chaque paire O/D :
+        - Colonnes train_* : métriques du trajet ferroviaire (NULL si aucun train)
+        - Colonnes flight_* : métriques de la meilleure alternative avion (NULL si aucun vol)
+        - best_mode : le mode le plus écologique (émissions CO2 ↓, puis durée ↓)
+
+        Couvre les deux directions :
+        1. Trajets train avec leur meilleure alternative avion (via candidates)
+        2. Vols sans aucun équivalent train (via gold_agg, anti-join sur city pair)
         """
-        self.logger.log_section("GOLD COMPARE BEST – meilleure option", level="INFO")
-        cfg = self.config
+        self.logger.info("Début de la comparaison train vs avion...")
 
-        w_best = (
-            Window.partitionBy(
-                "departure_station", "departure_city", "departure_country",
-                "arrival_station", "arrival_city", "arrival_country",
-            )
-            .orderBy(
-                F.col("duration_min").asc_nulls_last(),
-                F.col("correspondence_count").asc(),
-                F.col("comparison_emissions_co2").asc_nulls_last(),
-            )
-        )
+        od_keys = [
+            "source", "trip_id",
+            "departure_station", "departure_city", "departure_country",
+            "arrival_station", "arrival_city", "arrival_country",
+            "departure_parent_station", "arrival_parent_station",
+            "days_of_week",
+        ]
 
-        df_best = (
+        join_keys = [
+            "source", "trip_id",
+            "departure_station", "departure_city", "departure_country",
+            "arrival_station", "arrival_city", "arrival_country",
+        ]
+
+        city_od_keys = [
+            "departure_city", "departure_country",
+            "arrival_city", "arrival_country",
+        ]
+
+        # ── 1. Train-anchored : chaque train O/D + meilleur vol ─────
+        df_train_cand = (
             df_candidates
-            .withColumn("selection_rank", F.row_number().over(w_best))
-            .filter(F.col("selection_rank") == 1)
-            .drop("selection_rank")
+            .filter(F.col("candidate_mode") == "train")
+            .select(
+                *od_keys,
+                F.col("duration_min").alias("train_duration_min"),
+                F.col("comparison_distance_km").alias("train_distance_km"),
+                F.col("comparison_emissions_co2").alias("train_emissions_co2"),
+            )
         )
 
-        n = df_best.count()
-        self.logger.info(f"  Meilleures options : {n:,} O/D")
-
-        (
-            df_best
-            .coalesce(cfg.GOLD_COALESCE_BEST)
-            .write.mode("overwrite")
-            .parquet(str(cfg.GOLD_COMPARE_BEST_PATH))
+        w_flight = (
+            Window.partitionBy(*join_keys)
+            .orderBy(
+                F.col("comparison_emissions_co2").asc_nulls_last(),
+                F.col("duration_min").asc_nulls_last(),
+            )
         )
-        self.logger.info(f"  ✓ Sauvegardé : {cfg.GOLD_COMPARE_BEST_PATH}")
 
+        df_flight_cand = (
+            df_candidates
+            .filter(F.col("candidate_mode") == "flight")
+            .withColumn("rn", F.row_number().over(w_flight))
+            .filter(F.col("rn") == 1)
+            .drop("rn")
+            .select(
+                *join_keys,
+                F.col("candidate_id").alias("flight_candidate_id"),
+                F.col("correspondence_count").alias("flight_correspondence_count"),
+                F.col("duration_min").alias("flight_duration_min"),
+                F.col("comparison_distance_km").alias("flight_distance_km"),
+                F.col("comparison_emissions_co2").alias("flight_emissions_co2"),
+            )
+        )
+
+        df_train_vs_flight = (
+            df_train_cand
+            .join(df_flight_cand, on=join_keys, how="left")
+        )
+
+        # ── 2. Flight-only : vols sans équivalent train ──────────────
+        df_train_cities = df_train_cand.select(city_od_keys).distinct()
+
+        # Meilleur vol par city-pair (émissions ↓, durée ↓)
+        w_flight_city = (
+            Window.partitionBy(*city_od_keys)
+            .orderBy(
+                F.col("emissions_co2").asc_nulls_last(),
+                F.col("distance_km").asc_nulls_last(),
+            )
+        )
+
+        df_flights_only = (
+            df_gold_agg
+            .filter(F.col("mode") == "flight")
+            .join(df_train_cities, on=city_od_keys, how="left_anti")
+            .withColumn("rn", F.row_number().over(w_flight_city))
+            .filter(F.col("rn") == 1)
+            .drop("rn")
+            .select(
+                *od_keys,
+                F.lit(None).cast("double").alias("train_duration_min"),
+                F.lit(None).cast("double").alias("train_distance_km"),
+                F.lit(None).cast("double").alias("train_emissions_co2"),
+                F.col("trip_id").alias("flight_candidate_id"),
+                F.lit(0).cast("short").alias("flight_correspondence_count"),
+                F.lit(None).cast("double").alias("flight_duration_min"),
+                F.col("distance_km").alias("flight_distance_km"),
+                F.col("emissions_co2").alias("flight_emissions_co2"),
+            )
+        )
+
+        # ── 3. Union + best_mode ─────────────────────────────────────
+        df_best = (
+            df_train_vs_flight
+            .unionByName(df_flights_only)
+            .withColumn(
+                "best_mode",
+                F.when(
+                    F.col("train_emissions_co2").isNull(), F.lit("flight")
+                ).when(
+                    F.col("flight_emissions_co2").isNull(), F.lit("train")
+                ).when(
+                    F.col("flight_emissions_co2") < F.col("train_emissions_co2"),
+                    F.lit("flight"),
+                ).otherwise(F.lit("train")),
+            )
+        )
+
+        self.logger.info("Comparaison train vs avion terminée.")
         return df_best
 
     # ──────────────────────────────────────────────────────────────
@@ -669,32 +729,46 @@ class GoldAggregator:
 
         try:
             silver = self.load_silver()
+            cfg = self.config
 
+            # 1. Gold train – déjà matérialisé via localCheckpoint interne
             df_gold_train = self.build_gold_train(
                 silver["train_trip"], silver["localite"], silver["emission"]
             )
             dataframes["gold_train"] = df_gold_train
-            metrics["gold_train_rows"] = df_gold_train.count()
 
+            # 2. Gold flight – lazy, matérialisé lors du write gold_agg
             df_gold_flight = self.build_gold_flight(
                 silver["flight"], silver["localite"], silver["emission"]
             )
             dataframes["gold_flight"] = df_gold_flight
-            metrics["gold_flight_rows"] = df_gold_flight.count()
 
-            df_gold_agg = self.build_gold_agg(df_gold_train, df_gold_flight)
-            dataframes["gold_agg"] = df_gold_agg
-            metrics["gold_agg_rows"] = df_gold_agg.count()
+            # 3. Gold aggloméré – seul parquet écrit sur disque
+            #    L'action write matérialise df_gold_flight
+            #    df_gold_train est lu depuis le localCheckpoint (rapide)
+            self.build_gold_agg(df_gold_train, df_gold_flight)
+            dataframes["gold_agg"] = self.spark.read.parquet(str(cfg.GOLD_AGG_PATH))
 
+            # 4. Candidats comparaison – localCheckpoint pour couper la lineage
+            #    avant build_compare_best (évite double calcul)
             df_candidates = self.build_compare_candidates(
                 df_gold_train, silver["flight"], silver["emission"], silver["stop_matching"]
-            )
+            ).localCheckpoint(eager=True)
             dataframes["gold_compare_candidates"] = df_candidates
-            metrics["gold_compare_candidates_rows"] = df_candidates.count()
 
-            df_best = self.build_compare_best(df_candidates)
+            # 5. Comparaison train vs avion par O/D
+            df_best = self.build_compare_best(df_candidates, dataframes["gold_agg"])
             dataframes["gold_compare_best"] = df_best
-            metrics["gold_compare_best_rows"] = df_best.count()
+
+            # Counts (gold_train depuis checkpoint, gold_flight recalculé)
+            metrics["gold_train_rows"] = df_gold_train.count()
+            metrics["gold_flight_rows"] = dataframes["gold_agg"].filter(
+                F.col("mode") == "flight"
+            ).count()
+            self.logger.info(
+                f"Gold train : {metrics['gold_train_rows']:,} lignes | "
+                f"Gold flight : {metrics['gold_flight_rows']:,} lignes"
+            )
 
             return {
                 "status": "SUCCESS",

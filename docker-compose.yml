@@ -1,17 +1,53 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: obrail_postgres
+    environment:
+      POSTGRES_DB: ${PG_DB:-obrail}
+      POSTGRES_USER: ${PG_USER:-obrail}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-obrail123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-obrail}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   etl:
     build: .
+    container_name: obrail_etl
     env_file: .env
     environment:
       # Surcharge le JAVA_HOME macOS du .env avec le chemin Linux du conteneur
       JAVA_HOME: /usr/lib/jvm/default-java
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${PG_DB:-obrail}
+      PG_USER: ${PG_USER:-obrail}
+      PG_PASSWORD: ${PG_PASSWORD:-obrail123}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Optionnel : pour nettoyer PostgreSQL à chaque run
+    # command: --phases extraction transform load
+
+volumes:
+  postgres_data:
 
 # Utilisation :
 #   Toutes les phases         : docker compose run --rm etl
 #   Extraction seulement      : docker compose run --rm etl --phases extraction
 #   Transformation seulement  : docker compose run --rm etl --phases transform
+#   Chargement seulement      : docker compose run --rm etl --phases load
 #   Extraction + Transformation : docker compose run --rm etl --phases extraction transform
+#   Extraction + Chargement   : docker compose run --rm etl --phases extraction load
 #   Rebuild l'image           : docker compose build
+#   Arrêter tout              : docker compose down
+#   Arrêter et nettoyer       : docker compose down -v

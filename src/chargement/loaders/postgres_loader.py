@@ -7,6 +7,7 @@ Deux étapes :
 """
 
 import psycopg2
+from psycopg2 import sql
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +57,7 @@ class PostgresLoader:
         dict avec statut et éventuelles erreurs
         """
         sql_path: Path = self.config.SQL_INIT_SCRIPT
-        self.logger.info(f"Initialisation du schéma PG depuis : {sql_path}")
+        self.logger.debug(f"Initialisation du schéma PG depuis : {sql_path}")
 
         if not sql_path.exists():
             msg = f"Script SQL introuvable : {sql_path}"
@@ -68,15 +69,17 @@ class PostgresLoader:
         try:
             conn = self._get_connection()
             conn.autocommit = False
-            cur = conn.cursor()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql_content)
+                    conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
-            cur.execute(sql_content)
-            conn.commit()
-
-            cur.close()
-            conn.close()
-
-            self.logger.info("✓ Schéma PostgreSQL initialisé")
+            self.logger.info("Schéma PostgreSQL initialisé.")
             return {"status": "SUCCESS"}
 
         except Exception as exc:
@@ -110,11 +113,9 @@ class PostgresLoader:
         dict avec statut et nombre de lignes insérées
         """
         cfg = self.config
-        self.logger.info(f"Chargement JDBC → {table_name} (mode={mode})…")
+        self.logger.debug(f"Chargement JDBC → {table_name} (mode={mode})…")
 
         try:
-            n_rows = df.count()
-
             (
                 df.write
                 .format("jdbc")
@@ -130,12 +131,12 @@ class PostgresLoader:
                 .save()
             )
 
-            self.logger.info(f"  ✓ {table_name} : {n_rows:,} lignes insérées")
-            return {"status": "SUCCESS", "rows_inserted": n_rows}
+            self.logger.info(f"{table_name} chargée.")
+            return {"status": "SUCCESS"}
 
         except Exception as exc:
             self.logger.error(f"Erreur JDBC vers {table_name} : {exc}")
-            return {"status": "FAILED", "error": str(exc), "rows_inserted": 0}
+            return {"status": "FAILED", "error": str(exc)}
 
     # ──────────────────────────────────────────────────────────────
     # Truncate (réinitialisation avant rechargement)
@@ -148,15 +149,18 @@ class PostgresLoader:
         Utile pour recharger une table sans DROP/CREATE.
         Returns True si succès.
         """
-        self.logger.info(f"TRUNCATE {table_name}…")
+        self.logger.debug(f"TRUNCATE {table_name}…")
         try:
             conn = self._get_connection()
             conn.autocommit = True
-            cur = conn.cursor()
-            cur.execute(f"TRUNCATE TABLE {table_name} CASCADE;")
-            cur.close()
-            conn.close()
-            self.logger.info(f"  ✓ {table_name} vidée")
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql.SQL("TRUNCATE TABLE {} CASCADE").format(
+                        sql.Identifier(table_name)
+                    ))
+            finally:
+                conn.close()
+            self.logger.debug(f"{table_name} vidée")
             return True
         except Exception as exc:
             self.logger.error(f"Erreur TRUNCATE {table_name} : {exc}")

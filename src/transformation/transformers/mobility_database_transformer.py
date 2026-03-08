@@ -128,7 +128,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         )
 
         #checkpoint post-jointures (tronque le lineage + matérialise)
-        df_mdb = df_mdb.localCheckpoint()
+        df_mdb = df_mdb.localCheckpoint(eager=False)
         self.logger.debug("Checkpoint MDB post-jointures matérialisé")
 
         # # persistence avant enrichissements lourds
@@ -238,7 +238,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
             )
             .drop(*day_cols, "next_stop_lat", "next_stop_lon", "end_date_int")
             .withColumn("city", F.lit(None).cast("string"))
-            .withColumn("country", F.lit(None).cast("string"))
+            .withColumn("country", F.upper(F.col("_country")))
             .withColumn("is_night_train", F.col("route_type") == 105)
         )
 
@@ -365,24 +365,25 @@ class MobilityDatabaseTransformer(BaseTransformer):
         DataFrame
             DataFrame avec agences propagées via route_id
         """
-        # Repartition pour localiser les données par route avant la window function
-        df_repartitioned = df.repartition("source", "route_id").cache()
-        
-        w_route = Window.partitionBy("source", "route_id")
-        result = (
-            df_repartitioned
-            .withColumn("_route_agency_id", F.first("agency_id", True).over(w_route))
-            .withColumn("_route_agency_name", F.first("agency_name", True).over(w_route))
-            .withColumn("_route_agency_tz", F.first("agency_timezone", True).over(w_route))
+        df_route_agency = (
+            df
+            .select("source", "route_id", "agency_id", "agency_name", "agency_timezone")
+            .groupBy("source", "route_id")
+            .agg(
+                F.first("agency_id", ignorenulls=True).alias("_route_agency_id"),
+                F.first("agency_name", ignorenulls=True).alias("_route_agency_name"),
+                F.first("agency_timezone", ignorenulls=True).alias("_route_agency_tz"),
+            )
+        )
+
+        return (
+            df
+            .join(F.broadcast(df_route_agency), ["source", "route_id"], "left")
             .withColumn("agency_id", F.coalesce("agency_id", "_route_agency_id"))
             .withColumn("agency_name", F.coalesce("agency_name", "_route_agency_name"))
             .withColumn("agency_timezone", F.coalesce("agency_timezone", "_route_agency_tz"))
             .drop("_route_agency_id", "_route_agency_name", "_route_agency_tz")
         )
-        
-        result = result.localCheckpoint()
-        df_repartitioned.unpersist()
-        return result
 
     def _apply_manual_agency_mapping(self, df: DataFrame) -> DataFrame:
         """
@@ -458,7 +459,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         
         # Matérialiser et libérer le cache
         self.logger.debug("Matérialisation des distances Haversine et libération du cache...")
-        result = result.localCheckpoint()
+        result = result.localCheckpoint(eager=True)
         df_repartitioned.unpersist()
         
         return result

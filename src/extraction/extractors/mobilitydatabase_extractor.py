@@ -174,47 +174,60 @@ class MobilityDatabaseExtractor(BaseExtractor):
             sock_read=150
         )
         
-        async with aiohttp.ClientSession(
-            connector=connector,
-            timeout=download_timeout,
-            raise_for_status=False
-        ) as session:
+        results: list[dict[str, Any]] = []
 
-            # étape 1 : authentification OAuth2
-            access_token = await self._authenticate(session, api_timeout)
+        try:
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=download_timeout,
+                raise_for_status=False
+            ) as session:
 
-            # étape 2 : liste tous les feeds pour les 27 pays UE
-            feeds = await self._fetch_all_feeds(
-                session,
-                access_token,
-                api_timeout
-            )
+                # étape 1 : authentification OAuth2
+                access_token = await self._authenticate(session, api_timeout)
 
-            if not feeds:
-                return {
-                    'feeds_total': 0,
-                    'files_downloaded': 0,
-                    'total_size_bytes': 0,
-                    'output_paths': []
-                }
-            
+                # étape 2 : liste tous les feeds pour les 27 pays UE
+                feeds = await self._fetch_all_feeds(
+                    session,
+                    access_token,
+                    api_timeout
+                )
 
-            
-            def _get_feed_key(feed: dict[str, Any]) -> str:
-                locations: list[dict[str, str]] = feed.get('locations') or []
-                country = locations[0].get('country_code', 'XX').upper() if locations else 'XX'
-                return f"{country}:{feed.get('id', '')}"
+                if not feeds:
+                    return {
+                        'feeds_total': 0,
+                        'files_downloaded': 0,
+                        'total_size_bytes': 0,
+                        'output_paths': []
+                    }
 
-            feeds = [feed for feed in feeds if _get_feed_key(feed) in ALLOWED_FEEDS]
+                def _get_feed_key(feed: dict[str, Any]) -> str:
+                    locations: list[dict[str, str]] = feed.get('locations') or []
+                    country = locations[0].get('country_code', 'XX').upper() if locations else 'XX'
+                    return f"{country}:{feed.get('id', '')}"
 
-            stats['total'] = len(feeds)
-            self.logger.info(f"Téléchargement de {len(feeds)} feeds validé GTFS depuis Mobility Database...")
+                feeds = [feed for feed in feeds if _get_feed_key(feed) in ALLOWED_FEEDS]
 
-            # étape 3 : téléchargement en parallèle avec limite de concurrence
-            results = await self._download_all_feeds(
-                session,
-                feeds,
-                stats
+                stats['total'] = len(feeds)
+                self.logger.info(f"Téléchargement de {len(feeds)} feeds validé GTFS depuis Mobility Database...")
+
+                # étape 3 : téléchargement en parallèle avec limite de concurrence
+                results = await self._download_all_feeds(
+                    session,
+                    feeds,
+                    stats
+                )
+
+        except AttributeError as exc:
+            # Contournement robuste d'un bug de cleanup asyncio/aiohttp observé sur Python récents
+            # où la fermeture de transport SSL peut lever: "'NoneType' object has no attribute '_abort'"
+            completed = stats['success'] + stats['failed'] + stats['skipped']
+            if "_abort" not in str(exc) or completed < stats['total']:
+                raise
+
+            self.logger.warning(
+                "Avertissement non bloquant pendant la fermeture HTTP async "
+                f"(cleanup transport): {exc}. Les résultats téléchargés sont conservés."
             )
 
         # agrégation des résultats

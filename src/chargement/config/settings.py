@@ -45,7 +45,6 @@ class ChargementConfig(BaseConfig):
     GOLD_TRAIN_PATH:               Path = GOLD_PATH / "gold_routes_train.parquet"
     GOLD_FLIGHT_PATH:              Path = GOLD_PATH / "gold_routes_flight.parquet"
     GOLD_AGG_PATH:                 Path = GOLD_PATH / "gold_routes_agglomere.parquet"
-    GOLD_COMPARE_CANDIDATES_PATH:  Path = GOLD_PATH / "gold_compare_candidates.parquet"
     GOLD_COMPARE_BEST_PATH:        Path = GOLD_PATH / "gold_compare_best.parquet"
 
     # ──────────────────────────────────────────────────────────────
@@ -88,7 +87,6 @@ class ChargementConfig(BaseConfig):
     GOLD_COALESCE_AGG:           int = 40  # gold_routes_agglomere (gros)
     GOLD_COALESCE_TRAIN:         int = 40  # gold_routes_train
     GOLD_COALESCE_FLIGHT:        int = 10  # gold_routes_flight (petit)
-    GOLD_COALESCE_CANDIDATES:    int = 40  # compare_candidates
     GOLD_COALESCE_BEST:          int = 20  # compare_best
 
     # Batch size JDBC pour l'insertion en base

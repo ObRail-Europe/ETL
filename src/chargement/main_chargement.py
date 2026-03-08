@@ -110,15 +110,14 @@ class DataLoader:
 
             # Ordre de chargement (pas de FK entre les tables gold)
             tables = [
-                ("gold_routes_train",              dfs["gold_train"]),
-                ("gold_routes_flight",             dfs["gold_flight"]),
                 ("gold_routes",                    dfs["gold_agg"]),
-                ("gold_compare_candidates",        dfs["gold_compare_candidates"]),
                 ("gold_compare_best",              dfs["gold_compare_best"]),
             ]
 
             load_results: dict[str, Any] = {}
             for table_name, df in tables:
+                # Remplace les NULL dans departure_country par 'XX' (contrainte NOT NULL en PG)
+                df = df.fillna({"departure_country": "XX"})
                 # On tronque d'abord pour éviter les doublons sur les re-runs
                 pg_loader.truncate_table(table_name)
                 load_result = pg_loader.load_dataframe(df, table_name, mode="append")
@@ -156,15 +155,10 @@ class DataLoader:
             1 for r in load_results.values()
             if isinstance(r, dict) and r.get("status") == "SUCCESS"
         )
-        total_rows = sum(
-            r.get("rows_inserted", 0) for r in load_results.values()
-            if isinstance(r, dict)
-        )
 
         metrics: dict[str, str | float | int] = {
             "Statut global":          status,
             "Tables chargées":        f"{tables_ok}/{len(load_results)}",
-            "Lignes insérées (total)": f"{total_rows:,}",
             "Durée totale":           f"{duration:.2f}s",
         }
         self.logger.log_metrics(metrics, prefix="le chargement")
