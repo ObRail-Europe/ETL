@@ -69,7 +69,7 @@ def tree_union(dfs: list[DataFrame]) -> DataFrame | None:
         next_dfs = []
         for i in range(0, len(dfs), 2):
             if i + 1 < len(dfs):
-                next_dfs.append(dfs[i].unionAll(dfs[i + 1]))
+                next_dfs.append(dfs[i].union(dfs[i + 1]))
             else:
                 next_dfs.append(dfs[i])
         dfs = next_dfs

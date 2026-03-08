@@ -55,7 +55,10 @@ class OurAirportsTransformer(BaseTransformer):
             str(cfg.OURAIRPORTS_RAW_PATH / "countries.parquet")
         )
 
-        self.logger.debug(f"Aéroports bruts : {df_airports.count()}")
+        self.logger.debug(
+            "Aéroports bruts chargés (jointure country_name + filtres Europe/type + "
+            "exclusion RU hors zone + dédup ident à suivre)"
+        )
 
         # jointure pour country_name
         df_countries_clean = df_countries.select(
@@ -91,7 +94,9 @@ class OurAirportsTransformer(BaseTransformer):
         # déduplication sur identifiant unique
         df_airports = df_airports.dropDuplicates(["ident"])
 
-        self.logger.debug(f"Aéroports européens filtrés : {df_airports.count()}")
+        self.logger.debug(
+            "Aéroports européens filtrés et dédupliqués (clés: ident, iso_country, type)"
+        )
 
         return df_airports.select(
             "id", "ident", "type", "name",
@@ -297,7 +302,9 @@ class OurAirportsTransformer(BaseTransformer):
         # dédup par paire origin-destination
         df = df.dropDuplicates(["origin_id", "dest_id"])
 
-        self.logger.debug(f"Trajets après scénario 1 : {df.count()}")
+        self.logger.debug(
+            "Trajets scénario 1 préparés (règles appliquées + dédup origin_id/dest_id)"
+        )
         return df
 
     def _add_emission_ref(self, df: DataFrame) -> DataFrame:

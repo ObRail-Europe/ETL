@@ -39,7 +39,8 @@ class BaseConfig:
     # Java Home - obligatoire pour PySpark, Java 17 recommandé (Java 8 fonctionne aussi)
     JAVA_HOME = os.getenv("JAVA_HOME")
 
-    # Config Spark - 4g suffit pour le dev, monter à 8-16g en prod selon les datasets
+    # Config Spark - 4g suffit pour le dev, monter si OutOfMemoryError
+    # Augmenter si OutOfMemoryError occurs - window functions consomment beaucoup avec shuffle
     SPARK_CONFIG: dict[str, str] = {
         "spark.driver.memory": os.getenv("SPARK_DRIVER_MEMORY", "4g"),
         "spark.executor.memory": os.getenv("SPARK_EXECUTOR_MEMORY", "4g"),
@@ -48,6 +49,9 @@ class BaseConfig:
         "spark.sql.adaptive.coalescePartitions.enabled": os.getenv("SPARK_SQL_ADAPTIVE_COALESCEPARTITIONS_ENABLED", "true"),
         "spark.serializer": os.getenv("SPARK_SERIALIZER", "org.apache.spark.serializer.KryoSerializer"),  # plus rapide que Java serializer
         "spark.eventLog.enabled": os.getenv("SPARK_EVENTLOG_ENABLED", "false"),  # activer en prod pour le monitoring
+        # Optimisations pour réduire la pression mémoire sur les window functions
+        "spark.sql.shuffle.sort.bypassMergeThreshold": os.getenv("SPARK_SHUFFLE_BYPASS_THRESHOLD", "200"),
+        "spark.sql.windowExec.buffer.spill.threshold": os.getenv("SPARK_WINDOW_SPILL_THRESHOLD", "10000"),
     }
 
     # permet d'ajouter des configs Spark custom via variable d'environnement

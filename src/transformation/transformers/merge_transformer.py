@@ -79,16 +79,16 @@ class MergeTransformer(BaseTransformer):
         # construction table localite (trips + aéroports) 
         df_localite = self._build_localite_table(df_final, df_airports)
 
-        # checkpoint localite (CRITIQUE: monotonically_increasing_id est non-déterministe)
+        # checkpoint localite (tronque le lineage)
         df_localite = df_localite.localCheckpoint()
-        self.logger.debug("Checkpoint localite matérialisé (city_id déterministes)")
+        self.logger.debug("Checkpoint localite matérialisé")
 
         # construction table emission
         df_emission = self._build_emission_table(df_localite, df_ember, df_ademe)
 
-        # checkpoint emission (CRITIQUE: monotonically_increasing_id est non-déterministe)
+        # checkpoint emission (tronque le lineage)
         df_emission = df_emission.localCheckpoint()
-        self.logger.debug("Checkpoint emission matérialisé (emission_id déterministes)")
+        self.logger.debug("Checkpoint emission matérialisé")
 
         # remplacement FK dans trip
         df_final = self._replace_fk_in_trips(df_final, df_localite, df_emission)
@@ -186,7 +186,7 @@ class MergeTransformer(BaseTransformer):
         )
 
         # tous les trips MDB matchés (L1 + L2)
-        all_matched_mdb = mdb_matched_l1.unionAll(mdb_matched_l2).distinct()
+        all_matched_mdb = mdb_matched_l1.union(mdb_matched_l2).distinct()
 
         # retrait des trips MDB matchés (remplacés par leur version BOTN)
         df_mdb_unmatched = df_mdb.join(
@@ -341,12 +341,13 @@ class MergeTransformer(BaseTransformer):
         )
 
         # union et dédupl
+        w_city_id = Window.orderBy("country_code", "city_name")
         df_localite = (
             df_trip_cities
             .unionByName(df_airport_cities)
             .distinct()
             .filter(F.length(F.col("country_code")) == 2)
-            .withColumn("city_id", F.monotonically_increasing_id())
+            .withColumn("city_id", F.row_number().over(w_city_id))
         )
 
         # mapping alpha-2 → nom de pays complet
@@ -413,6 +414,12 @@ class MergeTransformer(BaseTransformer):
             "country_code",
             F.col("emissions_intensity_gco2_per_kwh").alias("carbon_intensity_gco2_kwh")
         )
+        ademe_max_ref_row = df_ademe.select(
+            F.max(F.expr("try_cast(emission_ref as bigint)"))
+            .alias("max_emission_ref")
+        ).collect()[0]
+        ademe_max_ref = ademe_max_ref_row["max_emission_ref"]
+        ademe_max_ref = int(ademe_max_ref) if ademe_max_ref is not None else 0
         result = df_ember_int.agg(
             F.avg("carbon_intensity_gco2_kwh").alias("avg_val"),
             F.count("*").alias("cnt")
@@ -468,12 +475,13 @@ class MergeTransformer(BaseTransformer):
                     + ((1 - F.col("electrification_rate")) * F.lit(diesel_fixed))
                 )
             )
-            .withColumn("emission_id", F.monotonically_increasing_id())
         )
 
         # schéma unifié : emission_ref, emission_gCO2e_per_p_km, detail
+        w_emission_ref = Window.orderBy("country_code", "route_type")
         df_emission = df_emission.withColumn(
-            "emission_ref", F.col("emission_id")
+            "emission_ref",
+            F.row_number().over(w_emission_ref) + F.lit(ademe_max_ref)
         )
         df_emission = df_emission.withColumn(
             "emission_gCO2e_per_p_km", F.round(F.col("co2_per_pkm"), 3)
