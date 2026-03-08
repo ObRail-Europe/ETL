@@ -119,25 +119,27 @@ class ETLPipeline:
 
     def run_loading(self) -> dict[str, Any]:
         """
-        Lance la phase 3 - agrégation finale pour l'API.
+        Lance la phase 3 – agrégation gold et chargement PostgreSQL.
 
         Returns
         -------
         dict[str, Any]
-            Statut du chargement (SKIPPED pour l'instant)
-
-        Notes
-        -----
-        Pas encore implémenté. Devra agréger les données pour l'API
-        (routes jour/nuit, gares, émissions train vs avion).
+            Statut du chargement avec métriques par étape
         """
         self.logger.log_section("PHASE 3 : CHARGEMENT", level="INFO")
-        self.logger.info("Chargement non encore implémenté")
 
-        return {
-            'status': 'SKIPPED',
-            'message': 'Module de chargement non encore implémenté'
-        }
+        from chargement.main_chargement import DataLoader
+        from chargement.config.settings import ChargementConfig
+
+        loader = DataLoader(
+            spark=self.spark,
+            spark_manager=self.spark_manager,
+            logger=self.logger.get_child("Chargement"),
+            config=self.config,
+            chargement_config=ChargementConfig(),
+        )
+
+        return loader.run()
 
     def run(self, phases: list[str] | None = None) -> dict[str, Any]:
         """
