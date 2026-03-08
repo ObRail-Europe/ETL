@@ -53,6 +53,20 @@ class MobilityDatabaseTransformer(BaseTransformer):
             "calendar_dates", cfg.GTFS_COLS_CALENDAR_DATES
         )
 
+        # vérification des tables critiques
+        critical_tables = {
+            "routes": df_routes,
+            "trips": df_trips,
+            "stop_times": df_stop_times,
+            "stops": df_stops,
+        }
+        missing = [name for name, df in critical_tables.items() if df is None]
+        if missing:
+            raise RuntimeError(
+                f"Tables GTFS critiques manquantes: {', '.join(missing)}. "
+                f"Aucun fichier trouvé dans {cfg.MDB_RAW_PATH}"
+            )
+
         # # persistence des tables volumineuses pour éviter recalculs
         # self.logger.debug("Persistence des tables volumineuses (trips, stop_times, stops)...")
         # if df_trips is not None:
@@ -110,7 +124,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         df_mdb = (
             df_mdb
             .filter(F.col("route_type").isin(cfg.VALID_ROUTE_TYPES))
-            .dropDuplicates(["agency_id", "trip_id", "stop_sequence", "stop_id"])
+            .dropDuplicates(["source", "agency_id", "trip_id", "stop_sequence", "stop_id"])
         )
 
         #checkpoint post-jointures (tronque le lineage + matérialise)
@@ -137,6 +151,8 @@ class MobilityDatabaseTransformer(BaseTransformer):
 
         # filtre trips avec un seul arrêt
         self.logger.debug("Filtre des trips à un seul arrêt...")
+        # Repartition AVANT window function pour éviter shuffle vers single partition
+        df_mdb = df_mdb.repartition("source", "trip_id")
         w_trip = Window.partitionBy("source", "trip_id")
         df_mdb = (
             df_mdb
@@ -159,6 +175,11 @@ class MobilityDatabaseTransformer(BaseTransformer):
         # correction des fuseaux horaires via TZ_MAPPING
         self.logger.debug("Correction des fuseaux horaires CET/UTC → IANA...")
         df_mdb = apply_tz_mapping(df_mdb, self.config.TZ_MAPPING, country_col="_country")
+
+        # Checkpoint avant les opérations de fenêtrage coûteuses
+        # Cela tronque la dépendance et libère l'optimiseur Catalyst
+        self.logger.debug("Checkpoint pré-enrichissement pour tronquer le lineage...")
+        df_mdb = df_mdb.localCheckpoint()
 
         # propagation d'agence par route
         self.logger.debug("Propagation des agences par route_id...")
@@ -266,16 +287,25 @@ class MobilityDatabaseTransformer(BaseTransformer):
 
             # projection immédiate avec nettoyage direct
             exprs: list[F.Column] = [F.lit(source_name).alias("source")]
-            for c in expected_columns:
-                if c == "source":
-                    continue
+            
+            # colonnes normales (avec lowercase)
+            normal_cols = [c for c in expected_columns if c not in ("source", "agency_timezone")]
+            for c in normal_cols:
                 if c in df_temp.columns:
-                    cleaned = F.trim(
-                        F.lower(F.regexp_replace(F.col(c).cast("string"), '["\']', ''))
+                    exprs.append(
+                        F.lower(F.trim(F.regexp_replace(F.col(c).cast("string"), '["\']', ''))).alias(c)
                     )
-                    exprs.append(cleaned.alias(c))
                 else:
                     exprs.append(F.lit(None).cast("string").alias(c))
+            
+            # agency_timezone sans lowercase (format IANA)
+            if "agency_timezone" in expected_columns:
+                if "agency_timezone" in df_temp.columns:
+                    exprs.append(
+                        F.trim(F.regexp_replace(F.col("agency_timezone").cast("string"), '["\']', '')).alias("agency_timezone")
+                    )
+                else:
+                    exprs.append(F.lit(None).cast("string").alias("agency_timezone"))
 
             unified_dfs.append(df_temp.select(*exprs))
 
@@ -297,18 +327,22 @@ class MobilityDatabaseTransformer(BaseTransformer):
         DataFrame
             DataFrame avec route_type enrichi
         """
-        w_rt = Window.partitionBy("route_id").orderBy(
+        # Repartition pour l'agrégation par route
+        df_route_types = df.select("source", "route_id", "route_type").distinct()
+        df_route_types = df_route_types.repartition("source", "route_id")
+        
+        w_rt = Window.partitionBy("source", "route_id").orderBy(
             F.when(F.col("route_type") != 2, 0).otherwise(1),
             "route_type"
         )
         df_route_enrich = (
-            df.select("route_id", "route_type").distinct()
+            df_route_types
             .withColumn("rn", F.row_number().over(w_rt))
             .filter(F.col("rn") == 1)
-            .select("route_id", F.col("route_type").alias("enriched_route_type"))
+            .select("source", "route_id", F.col("route_type").alias("enriched_route_type"))
         )
         return (
-            df.join(F.broadcast(df_route_enrich), "route_id", "left")
+            df.join(F.broadcast(df_route_enrich), ["source", "route_id"], "left")
             .withColumn(
                 "route_type",
                 F.when(F.col("route_type") == 2, F.col("enriched_route_type"))
@@ -331,9 +365,12 @@ class MobilityDatabaseTransformer(BaseTransformer):
         DataFrame
             DataFrame avec agences propagées via route_id
         """
+        # Repartition pour localiser les données par route avant la window function
+        df_repartitioned = df.repartition("source", "route_id").cache()
+        
         w_route = Window.partitionBy("source", "route_id")
-        return (
-            df
+        result = (
+            df_repartitioned
             .withColumn("_route_agency_id", F.first("agency_id", True).over(w_route))
             .withColumn("_route_agency_name", F.first("agency_name", True).over(w_route))
             .withColumn("_route_agency_tz", F.first("agency_timezone", True).over(w_route))
@@ -342,6 +379,10 @@ class MobilityDatabaseTransformer(BaseTransformer):
             .withColumn("agency_timezone", F.coalesce("agency_timezone", "_route_agency_tz"))
             .drop("_route_agency_id", "_route_agency_name", "_route_agency_tz")
         )
+        
+        result = result.localCheckpoint()
+        df_repartitioned.unpersist()
+        return result
 
     def _apply_manual_agency_mapping(self, df: DataFrame) -> DataFrame:
         """
@@ -381,6 +422,8 @@ class MobilityDatabaseTransformer(BaseTransformer):
     ) -> DataFrame:
         """
         calcule la distance Haversine entre arrêts consécutifs avec facteur de détour
+        
+        Optimisée avec repartition préalable pour éviter la mise en cache sur un seul nœud.
 
         Parameters
         ----------
@@ -394,9 +437,14 @@ class MobilityDatabaseTransformer(BaseTransformer):
         DataFrame
             DataFrame avec colonnes next_stop_lat, next_stop_lon, segment_dist_m
         """
+        # CRITIQUE: Repartition AVANT window function pour éviter shuffle vers single partition
+        # Sans cela, Spark remet toutes les données sur un seul nœud = OutOfMemoryError
+        self.logger.debug(f"Repartition sur {partition_cols} pour window function Haversine...")
+        df_repartitioned = df.repartition(*partition_cols).cache()
+        
         w_seq = Window.partitionBy(*partition_cols).orderBy("stop_sequence")
-        return (
-            df
+        result = (
+            df_repartitioned
             .withColumn("next_stop_lat", F.lead("stop_lat").over(w_seq))
             .withColumn("next_stop_lon", F.lead("stop_lon").over(w_seq))
             .withColumn(
@@ -407,6 +455,13 @@ class MobilityDatabaseTransformer(BaseTransformer):
                 ) * self.config.RAIL_DETOUR_FACTOR
             )
         )
+        
+        # Matérialiser et libérer le cache
+        self.logger.debug("Matérialisation des distances Haversine et libération du cache...")
+        result = result.localCheckpoint()
+        df_repartitioned.unpersist()
+        
+        return result
 
     def _reconstruct_calendar(
         self,

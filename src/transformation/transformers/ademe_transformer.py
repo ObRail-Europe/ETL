@@ -8,7 +8,7 @@ facteurs pondérés pour chaque type de trajet aérien
 
 from typing import Any
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, Window
 from pyspark.sql.types import (
     StructType, StructField, LongType, StringType, DoubleType,
 )
@@ -48,14 +48,14 @@ class AdemeTransformer(BaseTransformer):
         df = self.spark.read.parquet(
             str(cfg.ADEME_RAW_PATH / "ademe_base_carbone_aerien.parquet")
         )
-        self.logger.debug(f"ADEME brut : {df.count()} lignes")
+        self.logger.debug("ADEME brut chargé")
 
         df = (
             df
             .filter(F.col("Statut_de_l'élément") == "Valide générique")
             .filter(F.col("Type_poste").isNull())
         )
-        self.logger.debug(f"Après filtrage statut + type_poste : {df.count()} lignes")
+        self.logger.debug("Filtrage ADEME appliqué: statut valide générique + Type_poste NULL")
         return df
 
     def _parse_and_categorize(self, df: DataFrame) -> DataFrame:
@@ -90,7 +90,7 @@ class AdemeTransformer(BaseTransformer):
             .groupBy("seat_category", "distance_category")
             .agg(F.avg("Total_poste_non_décomposé").alias("emission_kgCO2_per_pkm"))
         )
-        self.logger.debug(f"Lignes de base après agrégation : {df_agg.count()}")
+        self.logger.debug("Agrégation ADEME par (seat_category, distance_category) terminée")
         return df_agg
 
     def _add_weighted_mappings(self, df_base: DataFrame) -> DataFrame:
@@ -140,11 +140,12 @@ class AdemeTransformer(BaseTransformer):
         df_mapping = self.spark.createDataFrame(mapping_rows, schema=mapping_schema)
 
         # ajouter emission_ref et detail aux lignes de bzse
+        w_base_ref = Window.orderBy("seat_category", "distance_category")
         df_base_with_detail = (
             df_base
             .withColumn(
                 "emission_ref",
-                F.monotonically_increasing_id()
+                F.row_number().over(w_base_ref)
             )
             .withColumn(
                 "detail",

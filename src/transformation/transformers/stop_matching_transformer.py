@@ -53,7 +53,10 @@ class StopMatchingTransformer(BaseTransformer):
                 & F.col("stop_lon").isNotNull()
             )
         )
-        self.logger.debug(f"Arrêts distincts : {df_stops.count()}")
+        self.logger.debug(
+            "Arrêts distincts préparés (source, stop_id, stop_lat, stop_lon), "
+            "avec coordonnées non nulles"
+        )
         return df_stops
 
     def _geo_bucket_matching(
@@ -160,7 +163,10 @@ class StopMatchingTransformer(BaseTransformer):
             .dropDuplicates(["source", "gare_id", "airport_id"])
         )
 
-        self.logger.debug(f"Paires gare-aéroport matchées : {df_matched.count()}")
+        self.logger.debug(
+            "Paires gare-aéroport préparées (meilleur match par gare + meilleur match "
+            "par aéroport, puis déduplication)"
+        )
         return df_matched
 
     def _add_unmatched(
@@ -199,9 +205,8 @@ class StopMatchingTransformer(BaseTransformer):
         )
 
         self.logger.debug(
-            f"Stop matching final : {df_result.count()} lignes "
-            f"(dont {df_unmatched_stops.count()} gares non matchées, "
-            f"{df_unmatched_airports.count()} aéroports non matchés)"
+            "Stop matching final préparé : union des paires matchées, gares non matchées "
+            "et aéroports non matchés"
         )
         return df_result
 
