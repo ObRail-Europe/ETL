@@ -28,3 +28,14 @@ services:
 
 volumes:
   postgres_data:
+
+# Utilisation :
+#   Toutes les phases         : docker compose run --rm etl
+#   Extraction seulement      : docker compose run --rm etl --phases extraction
+#   Transformation seulement  : docker compose run --rm etl --phases transform
+#   Chargement seulement      : docker compose run --rm etl --phases load
+#   Extraction + Transformation : docker compose run --rm etl --phases extraction transform
+#   Extraction + Chargement   : docker compose run --rm etl --phases extraction load
+#   Rebuild l'image           : docker compose build
+#   Arrêter tout              : docker compose down
+#   Arrêter et nettoyer       : docker compose down -v
