@@ -6,8 +6,11 @@ Spark à chaque étape (lent et consomme beaucoup de RAM).
 """
 
 import os
+from pathlib import Path
 from typing import Any
 from pyspark.sql import SparkSession
+from py4j.protocol import Py4JError
+from py4j.clientserver import Py4JNetworkError
 
 from .config import BaseConfig
 from .logging import SparkLogger
@@ -87,6 +90,11 @@ class SparkManager:
 
         self.spark = builder.getOrCreate()
 
+        # checkpoint Spark sur disque (évite localCheckpoint en mémoire sur gros jobs)
+        checkpoint_dir = Path(self.config.PROJECT_ROOT) / "artifacts" / "checkpoints"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.spark.sparkContext.setCheckpointDir(str(checkpoint_dir))
+
         # coupe le spam des logs Spark - garde que les WARN et ERROR
         self.spark.sparkContext.setLogLevel("WARN")
 
@@ -115,7 +123,7 @@ class SparkManager:
 
     def cleanup(self) -> None:
         """
-        Arrête la session Spark et libère la mémoire.
+        Arrête la session Spark, libère la mémoire et supprime les checkpoints.
 
         Notes
         -----
@@ -126,11 +134,35 @@ class SparkManager:
             if self.logger:
                 self.logger.info("Arrêt de la session Spark...")
 
-            self.spark.stop()
-            self.spark = None
+            try:
+                self.spark.stop()
+            except (ConnectionRefusedError, Py4JNetworkError, Py4JError, OSError) as e:
+                if self.logger:
+                    self.logger.warning(
+                        f"Spark déjà arrêté ou inaccessible pendant cleanup: {e}"
+                    )
+            finally:
+                self.spark = None
+
+            # nettoyage des fichiers checkpoint sur disque
+            self._cleanup_checkpoints()
 
             if self.logger:
                 self.logger.info("Session Spark arrêtée")
+
+    def _cleanup_checkpoints(self) -> None:
+        """Supprime le dossier artifacts/checkpoints/ créé par Spark."""
+        import shutil
+
+        checkpoint_dir = Path(self.config.PROJECT_ROOT) / "artifacts" / "checkpoints"
+        if checkpoint_dir.exists():
+            try:
+                shutil.rmtree(checkpoint_dir)
+                if self.logger:
+                    self.logger.debug("Checkpoints nettoyés")
+            except OSError as e:
+                if self.logger:
+                    self.logger.warning(f"Impossible de supprimer les checkpoints: {e}")
 
     def __enter__(self):
         """

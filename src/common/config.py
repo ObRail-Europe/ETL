@@ -52,6 +52,8 @@ class BaseConfig:
         # Optimisations pour réduire la pression mémoire sur les window functions
         "spark.sql.shuffle.sort.bypassMergeThreshold": os.getenv("SPARK_SHUFFLE_BYPASS_THRESHOLD", "200"),
         "spark.sql.windowExec.buffer.spill.threshold": os.getenv("SPARK_WINDOW_SPILL_THRESHOLD", "10000"),
+        # Driver JDBC PostgreSQL – téléchargé automatiquement depuis Maven Central
+        "spark.jars.packages": os.getenv("SPARK_JARS_PACKAGES", "org.postgresql:postgresql:42.7.3"),
     }
 
     # permet d'ajouter des configs Spark custom via variable d'environnement
