@@ -123,7 +123,7 @@ class SparkManager:
 
     def cleanup(self) -> None:
         """
-        Arrête la session Spark et libère la mémoire.
+        Arrête la session Spark, libère la mémoire et supprime les checkpoints.
 
         Notes
         -----
@@ -144,8 +144,25 @@ class SparkManager:
             finally:
                 self.spark = None
 
+            # nettoyage des fichiers checkpoint sur disque
+            self._cleanup_checkpoints()
+
             if self.logger:
                 self.logger.info("Session Spark arrêtée")
+
+    def _cleanup_checkpoints(self) -> None:
+        """Supprime le dossier artifacts/checkpoints/ créé par Spark."""
+        import shutil
+
+        checkpoint_dir = Path(self.config.PROJECT_ROOT) / "artifacts" / "checkpoints"
+        if checkpoint_dir.exists():
+            try:
+                shutil.rmtree(checkpoint_dir)
+                if self.logger:
+                    self.logger.debug("Checkpoints nettoyés")
+            except OSError as e:
+                if self.logger:
+                    self.logger.warning(f"Impossible de supprimer les checkpoints: {e}")
 
     def __enter__(self):
         """

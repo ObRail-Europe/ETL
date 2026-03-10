@@ -159,7 +159,7 @@ class GoldAggregator:
                 ),
             )
             .repartition(cfg.GOLD_SHUFFLE_PARTITIONS, "source", "trip_id")
-            .localCheckpoint(eager=True)
+            .checkpoint(eager=True)
         )
 
         self.logger.debug("Checkpoint df_work matérialisé")
@@ -260,10 +260,8 @@ class GoldAggregator:
             .groupBy(*dedup_keys)
             .agg(*agg_exprs)
             .select(self.GOLD_COLS)
-            .localCheckpoint(eager=True)
+            .checkpoint(eager=True)
         )
-
-        # df_work n'est plus nécessaire (lineage coupée par localCheckpoint)
 
         self.logger.info("Agrégation gold train terminée.")
         return df_gold_train
@@ -753,7 +751,7 @@ class GoldAggregator:
             #    avant build_compare_best (évite double calcul)
             df_candidates = self.build_compare_candidates(
                 df_gold_train, silver["flight"], silver["emission"], silver["stop_matching"]
-            ).localCheckpoint(eager=True)
+            ).checkpoint(eager=True)
             dataframes["gold_compare_candidates"] = df_candidates
 
             # 5. Comparaison train vs avion par O/D

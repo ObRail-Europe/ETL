@@ -4,6 +4,7 @@ venv/
 
 data/
 logs/
+artifacts/
 
 pycache/
 __pycache__/
