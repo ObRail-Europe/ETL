@@ -1,2 +1,2 @@
-# api/models/__init__.py
 from database import Base
+from .train_trip import TrainTrip

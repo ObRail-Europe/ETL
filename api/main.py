@@ -2,9 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from database import engine, get_db
-import models 
-import schemas 
-import crud
+import models, schemas, crud
 
 # Crée les tables si elles n'existent pas encore
 models.Base.metadata.create_all(bind=engine)

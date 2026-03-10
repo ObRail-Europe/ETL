@@ -101,3 +101,49 @@ class VolumeStats(BaseModel):
     arr_city_completeness_pct: float
     train_wins_total: int
     flight_wins_total: int
+    
+# ── TrainTrip ─────────────────────────────────────────────────────────────────
+class TrainTripCreate(BaseModel):
+    trip_id: Optional[str] = None
+    mode: Optional[str] = None
+    source: Optional[str] = None
+    departure_city: Optional[str] = None
+    departure_country: Optional[str] = None
+    departure_station: Optional[str] = None
+    departure_time: Optional[str] = None
+    arrival_city: Optional[str] = None
+    arrival_country: Optional[str] = None
+    arrival_station: Optional[str] = None
+    arrival_time: Optional[str] = None
+    agency_name: Optional[str] = None
+    is_night_train: Optional[bool] = None
+    distance_km: Optional[float] = None
+    emissions_co2: Optional[float] = None
+    co2_per_pkm: Optional[float] = None
+    days_of_week: Optional[str] = None
+    service_start_date: Optional[date] = None
+    service_end_date: Optional[date] = None
+
+class TrainTripOut(TrainTripCreate):
+    id: int
+    class Config:
+        from_attributes = True
+
+
+# ── Comparateur CO2 ───────────────────────────────────────────────────────────
+class Co2ComparisonOut(BaseModel):
+    departure_city: str
+    arrival_city: str
+    train_emissions_co2: Optional[float] = None
+    plane_emissions_co2: Optional[float] = None
+    difference_co2: Optional[float] = None
+    winner: Optional[str] = None
+
+
+# ── Statistiques ──────────────────────────────────────────────────────────────
+class StatsOut(BaseModel):
+    total_trips: int
+    avg_emissions_co2: Optional[float] = None
+    max_emissions_co2: Optional[float] = None
+    min_emissions_co2: Optional[float] = None
+    avg_distance_m: Optional[float] = None

@@ -78,7 +78,7 @@ def carbon_estimate(
 def carbon_ranking(
     departure_country: Optional[str] = Query(None),
     min_distance_km: Optional[float] = Query(None),
-    sort_by: str = Query("co2_saving_pct", regex="^(co2_saving_pct|train_emissions_co2|flight_emissions_co2)$"),
+    sort_by: str = Query("co2_saving_pct", pattern="^(co2_saving_pct|train_emissions_co2|flight_emissions_co2)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -102,7 +102,7 @@ def carbon_ranking(
             best_mode
         FROM gold_compare_best
         WHERE {where}
-        ORDER BY co2_saving_pct DESC
+        ORDER BY {sort_by} DESC
         LIMIT :limit OFFSET :offset
     """), params).mappings().all()
 

@@ -28,12 +28,13 @@ services:
       PG_DB: ${PG_DB:-obrail}
       PG_USER: ${PG_USER:-obrail}
       PG_PASSWORD: ${PG_PASSWORD:-obrail123}
+      DATABASE_URL: postgresql://${PG_USER:-obrail}:${PG_PASSWORD:-obrail123}@postgres:5432/${PG_DB:-obrail}
       API_KEY: ${API_KEY:-changeme}
       MODEL_PATH: /app/models/model.joblib
     ports:
       - "8000:8000"
     volumes:
-      - ./api/models:/app/models
+      - ./api/:/app
     depends_on:
       postgres:
         condition: service_healthy
