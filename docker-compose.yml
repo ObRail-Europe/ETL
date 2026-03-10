@@ -16,6 +16,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: obrail_api
+    env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${PG_DB:-obrail}
+      PG_USER: ${PG_USER:-obrail}
+      PG_PASSWORD: ${PG_PASSWORD:-obrail123}
+      API_KEY: ${API_KEY:-changeme}
+      MODEL_PATH: /app/models/model.joblib
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./api/models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   etl:
     build: .
