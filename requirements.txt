@@ -10,3 +10,9 @@ openpyxl
 pyarrow
 pycountry
 psycopg2-binary
+
+# API
+fastapi
+uvicorn[standard]
+pydantic
+slowapi
