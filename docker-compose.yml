@@ -38,11 +38,30 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./scripts:/app/scripts
     depends_on:
       postgres:
         condition: service_healthy
     # Optionnel : pour nettoyer PostgreSQL à chaque run
     # command: --phases extraction transform load
+
+  api:
+    build: .
+    container_name: obrail_api
+    env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${PG_DB:-obrail}
+      PG_USER: ${PG_USER:-obrail}
+      PG_PASSWORD: ${PG_PASSWORD:-obrail123}
+    ports:
+      - "8000:8000"
+    entrypoint: []
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:
