@@ -39,6 +39,21 @@ Les endpoints POST renvoient :
 Endpoints POST permettant de piloter l'ingestion des données de façon programmatique (cron, orchestrateur, webhook). Chaque endpoint déclenche la phase d'import correspondante et renvoie un compte-rendu d'exécution.
 
 > **Authentification :** Ces endpoints doivent être protégés (API key ou Bearer token) car ils modifient les données en base.
+>
+> **Implémentation :** Tous les endpoints `/import/*` nécessitent un **Bearer token** transmis via l'en-tête HTTP `Authorization: Bearer <token>`.
+>
+> Le token est chargé depuis la variable d'environnement `API_IMPORT_TOKEN` (défini dans `.env` ou Docker Compose).
+>
+> **Exemples :**
+> ```bash
+> # Requête avec token valide
+> curl -X POST http://localhost:8000/api/v1/import \
+>   -H "Authorization: Bearer votre_token_secret_ici"
+>
+> # Réponse sans token (ou token invalide) : HTTP 403 Forbidden
+> curl -X POST http://localhost:8000/api/v1/import
+> # → {"detail": "Invalid or missing import token"}
+> ```
 
 
 ### 1.1 `POST /import/cities`
@@ -713,7 +728,7 @@ LIMIT :page_size OFFSET (:page - 1) * :page_size;
 
 ### 5.4 `GET /carbon/factors`
 
-Consultation des facteurs d'émission bruts utilisés dans les calculs. Endpoint de transparence méthodologique : permet à un utilisateur ou une ONG de vérifier les facteurs CO₂/pkm appliqués par pays, par mode et par type de service.
+Consultation des facteurs d'émission bruts utilisés dans les calculs. Endpoint de transparence méthodologique : permet à un utilisateur ou une ONG de vérifier les valeurs de CO₂/pkm appliquées par pays, avec le nombre de trajets concernés.
 
 **Query params (tous optionnels) :**
 
@@ -730,18 +745,14 @@ SELECT
     mode,
     is_night_train,
     COUNT(*) AS nb_routes_using_factor,
-    ROUND(AVG(co2_per_pkm)::numeric, 4) AS avg_co2_per_pkm,
-    ROUND(MIN(co2_per_pkm)::numeric, 4) AS min_co2_per_pkm,
-    ROUND(MAX(co2_per_pkm)::numeric, 4) AS max_co2_per_pkm,
-    ROUND(STDDEV(co2_per_pkm)::numeric, 4) AS stddev_co2_per_pkm,
-    COUNT(DISTINCT co2_per_pkm) AS distinct_factors
+    ROUND(co2_per_pkm::numeric, 4) AS co2_per_pkm
 FROM gold_routes
 WHERE co2_per_pkm IS NOT NULL
   AND (:country IS NULL  OR departure_country = :country)
   AND (:mode IS NULL     OR mode = :mode)
   AND (:is_night IS NULL OR is_night_train = :is_night)
-GROUP BY departure_country, mode, is_night_train
-ORDER BY departure_country, mode, is_night_train;
+GROUP BY departure_country, mode, is_night_train, co2_per_pkm
+ORDER BY departure_country, mode, is_night_train, co2_per_pkm;
 ```
 
 **Réponse :**
@@ -753,11 +764,7 @@ ORDER BY departure_country, mode, is_night_train;
       "mode": "train",
       "is_night_train": false,
       "nb_routes_using_factor": 45200,
-      "avg_co2_per_pkm": 3.1200,
-      "min_co2_per_pkm": 2.8000,
-      "max_co2_per_pkm": 5.4000,
-      "stddev_co2_per_pkm": 0.8100,
-      "distinct_factors": 3
+      "co2_per_pkm": 3.1200
     }
   ]
 }
