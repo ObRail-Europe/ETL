@@ -118,12 +118,21 @@ class DataLoader:
             for table_name, df in tables:
                 # Remplace les NULL dans departure_country par 'XX' (contrainte NOT NULL en PG)
                 df = df.fillna({"departure_country": "XX"})
-                # On tronque d'abord pour éviter les doublons sur les re-runs
-                pg_loader.truncate_table(table_name)
-                load_result = pg_loader.load_dataframe(df, table_name, mode="append")
+                # Upsert incrémental : seules les partitions (pays) présentes dans ce run
+                # sont remplacées – les autres données existantes sont conservées.
+                load_result = pg_loader.upsert_via_staging(df, table_name)
                 load_results[table_name] = load_result
 
             results["loading"] = load_results
+
+            # ── Étape 4 : Index & ANALYZE post-chargement ──────────────────
+            self.logger.log_section("POST-CHARGEMENT (INDEX & ANALYZE)", level="INFO")
+            post_result = pg_loader.post_load()
+            results["post_load"] = post_result
+
+            if post_result["status"] == "FAILED":
+                raise RuntimeError(f"Échec post_load : {post_result.get('error')}")
+
             overall_status = "SUCCESS"
 
         except Exception as exc:
