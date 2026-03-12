@@ -418,6 +418,8 @@ class GoldAggregator:
         df_flight: DataFrame,
         df_emission: DataFrame,
         df_stop_matching: DataFrame,
+        df_train_trip: DataFrame,
+        df_localite: DataFrame,
     ) -> DataFrame:
         """
         Construit tous les candidats de comparaison train vs avion.
@@ -425,6 +427,7 @@ class GoldAggregator:
         Pour chaque trajet train O/D :
         - Candidat 1 : le train lui-même (0 correspondance)
         - Candidat 2 : le meilleur vol accessible depuis les gares (via stop_matching)
+        - Candidat 3 : vols accessibles par proximité ville ↔ aéroport (≤ 100 km)
         """
         self.logger.info("Début de la comparaison train vs avion...")
         cfg = self.config
@@ -508,20 +511,139 @@ class GoldAggregator:
             .withColumn("rn", F.row_number().over(w_flight_pair))
             .filter(F.col("rn") == 1)
             .drop("rn")
+            .checkpoint(eager=True)
+        )
+        self.logger.debug("Checkpoint df_flight_best matérialisé")
+
+        # ── Mapping ville → aéroport depuis stop_matching ─────────────
+        # Agrège stop_matching (gare→aéroport) au niveau ville via
+        # train_trip (stop_id→city_id) + localite (city_id→city_name).
+        # Note : stop_matching.gare_id = stop_id (pas parent_station).
+        # Résultat : pour chaque ville, tous les aéroports accessibles
+        # depuis au moins une de ses gares (distance min retenue).
+        df_station_city = (
+            df_train_trip
+            .select("source", F.col("stop_id").alias("gare_id"), "city_id")
+            .dropDuplicates(["source", "gare_id"])
         )
 
-        # Candidat 2 – vol depuis gare proche (via stop_matching, broadcast)
-        df_match_dep = F.broadcast(df_stop_matching.select(
-            F.col("gare_id").alias("dep_gare_id"),
-            F.col("airport_id").alias("dep_airport_id"),
-            F.col("distance_km").alias("dep_access_km"),
-        ))
-        df_match_arr = F.broadcast(df_stop_matching.select(
-            F.col("gare_id").alias("arr_gare_id"),
-            F.col("airport_id").alias("arr_airport_id"),
-            F.col("distance_km").alias("arr_access_km"),
-        ))
+        df_city_airport = (
+            df_stop_matching
+            .join(df_station_city, ["source", "gare_id"])
+            .join(
+                F.broadcast(df_localite.select("city_id", "city_name", "country_code")),
+                "city_id",
+            )
+            .groupBy("city_name", "country_code", "airport_id")
+            .agg(F.min("distance_km").alias("access_km"))
+            .checkpoint(eager=True)
+        )
 
+        self.logger.debug("Mapping ville → aéroport calculé depuis stop_matching")
+
+        # ── Meilleur vol par paire de villes unique ───────────────────
+        # Au lieu de joindre 72M O/D × aéroports dep × aéroports arr,
+        # on déduplique d'abord au niveau paire de villes (~50K)
+        # puis on cherche le meilleur vol pour chaque paire.
+        df_city_pairs = (
+            df_cmp_train
+            .select("departure_city", "departure_country",
+                    "arrival_city", "arrival_country")
+            .dropDuplicates()
+        )
+
+        df_city_dep = df_city_airport.select(
+            F.col("city_name").alias("dep_city"),
+            F.col("country_code").alias("dep_country"),
+            F.col("airport_id").alias("dep_airport_id"),
+            F.col("access_km").alias("dep_access_km"),
+        )
+        df_city_arr = df_city_airport.select(
+            F.col("city_name").alias("arr_city"),
+            F.col("country_code").alias("arr_country"),
+            F.col("airport_id").alias("arr_airport_id"),
+            F.col("access_km").alias("arr_access_km"),
+        )
+
+        w_best_city_flight = Window.partitionBy(
+            "departure_city", "departure_country",
+            "arrival_city", "arrival_country",
+        ).orderBy(
+            F.col("flight_emissions_co2").asc_nulls_last(),
+            F.col("flight_duration_min").asc_nulls_last(),
+        )
+
+        df_best_flight_by_city = (
+            df_city_pairs
+            .join(
+                df_city_dep,
+                (F.col("departure_city") == F.col("dep_city"))
+                & (F.col("departure_country") == F.col("dep_country")),
+                "inner",
+            )
+            .join(
+                df_city_arr,
+                (F.col("arrival_city") == F.col("arr_city"))
+                & (F.col("arrival_country") == F.col("arr_country")),
+                "inner",
+            )
+            .join(
+                df_flight_best,
+                ["dep_airport_id", "arr_airport_id"],
+                "inner",
+            )
+            .withColumn("access_km",
+                F.round(F.col("dep_access_km") + F.col("arr_access_km"), 2))
+            .withColumn("flight_duration_min",
+                F.round(
+                    F.col("flight_duration_min")
+                    + (F.col("access_km") / F.lit(cfg.AIRPORT_ACCESS_SPEED_KMH) * F.lit(60.0)),
+                    1,
+                ))
+            .withColumn("flight_distance_km",
+                F.round(F.col("flight_distance_km") + F.col("access_km"), 2))
+            .withColumn("rn", F.row_number().over(w_best_city_flight))
+            .filter(F.col("rn") == 1)
+            .drop("rn")
+            .select(
+                "departure_city", "departure_country",
+                "arrival_city", "arrival_country",
+                F.concat_ws("__",
+                    F.col("dep_airport_id"), F.col("arr_airport_id"),
+                ).alias("candidate_id"),
+                F.lit(2).alias("correspondence_count"),
+                F.col("flight_duration_min").alias("duration_min"),
+                F.col("flight_distance_km").alias("comparison_distance_km"),
+                F.col("flight_emissions_co2").alias("comparison_emissions_co2"),
+            )
+            .checkpoint(eager=True)
+        )
+
+        self.logger.debug("Meilleur vol par paire de villes calculé")
+
+        # ── Jointure retour vers les 72M O/D train ───────────────────
+        city_keys = [
+            "departure_city", "departure_country",
+            "arrival_city", "arrival_country",
+        ]
+
+        df_cmp_flight = (
+            df_cmp_train.alias("t")
+            .join(F.broadcast(df_best_flight_by_city).alias("bf"), city_keys, "inner")
+            .select(
+                "t.source", "t.trip_id",
+                "t.departure_station", "t.departure_city", "t.departure_country",
+                "t.arrival_station", "t.arrival_city", "t.arrival_country",
+                "t.departure_parent_station", "t.arrival_parent_station",
+                "t.days_of_week",
+                F.lit("flight").alias("candidate_mode"),
+                "bf.candidate_id", "bf.correspondence_count",
+                "bf.duration_min", "bf.comparison_distance_km",
+                "bf.comparison_emissions_co2",
+            )
+        )
+
+        # ── Union train + flight candidates ───────────────────────────
         _norm_cols = [
             "source", "trip_id",
             "departure_station", "departure_city", "departure_country",
@@ -532,45 +654,12 @@ class GoldAggregator:
             "duration_min", "comparison_distance_km", "comparison_emissions_co2",
         ]
 
-        df_cmp_flight = (
-            df_cmp_train.alias("t")
-            .join(df_match_dep.alias("md"),
-                  F.col("t.departure_parent_station") == F.col("md.dep_gare_id"), "inner")
-            .join(df_match_arr.alias("ma"),
-                  F.col("t.arrival_parent_station") == F.col("ma.arr_gare_id"), "inner")
-            .join(
-                df_flight_best.alias("fb"),
-                (F.col("md.dep_airport_id") == F.col("fb.dep_airport_id"))
-                & (F.col("ma.arr_airport_id") == F.col("fb.arr_airport_id")),
-                "inner",
-            )
-            .withColumn("candidate_mode", F.lit("flight"))
-            .withColumn("candidate_id", F.concat_ws("__",
-                F.col("fb.dep_airport_id"), F.col("fb.arr_airport_id"),
-            ))
-            .withColumn("access_km",
-                F.round(F.col("md.dep_access_km") + F.col("ma.arr_access_km"), 2))
-            .withColumn("correspondence_count", F.lit(2))
-            .withColumn("duration_min",
-                F.round(
-                    F.col("fb.flight_duration_min")
-                    + (F.col("access_km") / F.lit(cfg.AIRPORT_ACCESS_SPEED_KMH) * F.lit(60.0)),
-                    1,
-                ))
-            .withColumn("comparison_distance_km",
-                F.round(F.col("fb.flight_distance_km") + F.col("access_km"), 2))
-            .withColumn("comparison_emissions_co2", F.col("fb.flight_emissions_co2"))
-            .select("t.source", "t.trip_id",
-                    "t.departure_station", "t.departure_city", "t.departure_country",
-                    "t.arrival_station", "t.arrival_city", "t.arrival_country",
-                    "t.departure_parent_station", "t.arrival_parent_station",
-                    "t.days_of_week",
-                    "candidate_mode", "candidate_id", "correspondence_count",
-                    "duration_min", "comparison_distance_km", "comparison_emissions_co2")
-        )
-
         df_cmp_train_norm = df_cmp_train.select(_norm_cols)
-        df_candidates = df_cmp_train_norm.unionByName(df_cmp_flight)
+        df_candidates = (
+            df_cmp_train_norm
+            .unionByName(df_cmp_flight)
+            .checkpoint(eager=True)
+        )
 
         self.logger.info("Comparaison train vs avion terminée.")
         return df_candidates
@@ -627,7 +716,9 @@ class GoldAggregator:
                 F.col("comparison_distance_km").alias("train_distance_km"),
                 F.col("comparison_emissions_co2").alias("train_emissions_co2"),
             )
+            .checkpoint(eager=True)
         )
+        self.logger.debug("Checkpoint df_train_cand matérialisé")
 
         w_flight = (
             Window.partitionBy(*join_keys)
@@ -729,7 +820,7 @@ class GoldAggregator:
             silver = self.load_silver()
             cfg = self.config
 
-            # 1. Gold train – déjà matérialisé via localCheckpoint interne
+            # 1. Gold train – déjà matérialisé via checkpoint interne
             df_gold_train = self.build_gold_train(
                 silver["train_trip"], silver["localite"], silver["emission"]
             )
@@ -743,15 +834,15 @@ class GoldAggregator:
 
             # 3. Gold aggloméré – seul parquet écrit sur disque
             #    L'action write matérialise df_gold_flight
-            #    df_gold_train est lu depuis le localCheckpoint (rapide)
+            #    df_gold_train est lu depuis le checkpoint (rapide)
             self.build_gold_agg(df_gold_train, df_gold_flight)
             dataframes["gold_agg"] = self.spark.read.parquet(str(cfg.GOLD_AGG_PATH))
 
-            # 4. Candidats comparaison – localCheckpoint pour couper la lineage
-            #    avant build_compare_best (évite double calcul)
+            # 4. Candidats comparaison
             df_candidates = self.build_compare_candidates(
-                df_gold_train, silver["flight"], silver["emission"], silver["stop_matching"]
-            ).checkpoint(eager=True)
+                df_gold_train, silver["flight"], silver["emission"],
+                silver["stop_matching"], silver["train_trip"], silver["localite"],
+            )
             dataframes["gold_compare_candidates"] = df_candidates
 
             # 5. Comparaison train vs avion par O/D

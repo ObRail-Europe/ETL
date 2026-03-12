@@ -2,6 +2,12 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: obrail_postgres
+    command: >
+      postgres
+        -c max_wal_size=4GB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=512MB
+        -c synchronous_commit=off
     environment:
       POSTGRES_DB: ${PG_DB:-obrail}
       POSTGRES_USER: ${PG_USER:-obrail}
@@ -12,7 +18,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-obrail}"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-obrail} -d ${PG_DB:-obrail}"]
       interval: 10s
       timeout: 5s
       retries: 5

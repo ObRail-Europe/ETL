@@ -12,10 +12,10 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ------------------------------------------------------------
 -- 1.1 GOLD_ROUTES  (train + avion agglomérés)
+-- Note : IF NOT EXISTS préserve les données lors des re-runs.
+-- Pour une migration de schéma, exécuter manuellement un ALTER TABLE.
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS gold_routes CASCADE;
-
-CREATE TABLE gold_routes (
+CREATE TABLE IF NOT EXISTS gold_routes (
     source                   TEXT,
     trip_id                  TEXT,
     mode                     TEXT            NOT NULL,
@@ -60,10 +60,9 @@ CREATE TABLE gold_routes (
 
 -- ------------------------------------------------------------
 -- 1.2 GOLD_COMPARE_BEST  (comparaison train vs avion par O/D)
+-- Note : IF NOT EXISTS préserve les données lors des re-runs.
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS gold_compare_best CASCADE;
-
-CREATE TABLE gold_compare_best (
+CREATE TABLE IF NOT EXISTS gold_compare_best (
     source                      TEXT,
     trip_id                     TEXT,
 
@@ -94,6 +93,14 @@ CREATE TABLE gold_compare_best (
     best_mode                   TEXT             NOT NULL
 
 ) PARTITION BY LIST (departure_country);
+
+-- Index sur source créés avant les partitions pour accélérer
+-- le DELETE FROM gold_* WHERE source IN (...) lors des upserts.
+CREATE INDEX IF NOT EXISTS idx_routes_source
+    ON gold_routes (source);
+
+CREATE INDEX IF NOT EXISTS idx_compare_best_source
+    ON gold_compare_best (source);
 
 -- ============================================================
 -- 2. PARTITIONS

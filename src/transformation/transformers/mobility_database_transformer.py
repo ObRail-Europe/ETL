@@ -90,7 +90,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
 
         # # checkpoint PRÉCOCE après jointures pour tronquer le lineage 
         # self.logger.debug("Checkpoint précoce post-jointures pour tronquer le lineage...")
-        # df_mdb = df_mdb.localCheckpoint()
+        # df_mdb = df_mdb.checkpoint(eager=False)
 
         # # libération mémoire des tables sources (plus nécessaires)
         # self.logger.debug("Libération mémoire des tables sources...")
@@ -127,8 +127,9 @@ class MobilityDatabaseTransformer(BaseTransformer):
             .dropDuplicates(["source", "agency_id", "trip_id", "stop_sequence", "stop_id"])
         )
 
-        #checkpoint post-jointures (tronque le lineage + matérialise)
-        df_mdb = df_mdb.localCheckpoint(eager=False)
+        # checkpoint post-jointures (tronque le lineage + matérialise)
+        # eager=False : chaîne de transformations linéaire, pas de branche immédiate
+        df_mdb = df_mdb.checkpoint(eager=False)
         self.logger.debug("Checkpoint MDB post-jointures matérialisé")
 
         # # persistence avant enrichissements lourds
@@ -179,7 +180,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         # Checkpoint avant les opérations de fenêtrage coûteuses
         # Cela tronque la dépendance et libère l'optimiseur Catalyst
         self.logger.debug("Checkpoint pré-enrichissement pour tronquer le lineage...")
-        df_mdb = df_mdb.localCheckpoint()
+        df_mdb = df_mdb.checkpoint(eager=False)
 
         # propagation d'agence par route
         self.logger.debug("Propagation des agences par route_id...")
@@ -194,13 +195,14 @@ class MobilityDatabaseTransformer(BaseTransformer):
         df_mdb = self._compute_segment_distances(df_mdb, partition_cols=["source", "trip_id"])
 
         # checkpoint post-Haversine (tronque le lineage + matérialise)
-        df_mdb = df_mdb.localCheckpoint()
+        # eager=False : pas de réutilisation multi-branches à ce stade
+        df_mdb = df_mdb.checkpoint(eager=False)
         self.logger.debug("Checkpoint MDB post-Haversine matérialisé")
 
         # # checkpoint post-Haversine (tronque le lineage + matérialise)
         # self.logger.debug("Checkpoint post-Haversine + libération mémoire précédente...")
         # df_mdb_old = df_mdb
-        # df_mdb = df_mdb.localCheckpoint()
+        # df_mdb = df_mdb.checkpoint(eager=False)
         # df_mdb_old.unpersist()  # libère le DataFrame persisté précédemment
 
         #filtre des segments à distance nulle ou invalide
@@ -459,7 +461,8 @@ class MobilityDatabaseTransformer(BaseTransformer):
         
         # Matérialiser et libérer le cache
         self.logger.debug("Matérialisation des distances Haversine et libération du cache...")
-        result = result.localCheckpoint(eager=True)
+        # eager=True : force la matérialisation avant unpersist du cache intermédiaire
+        result = result.checkpoint(eager=True)
         df_repartitioned.unpersist()
         
         return result
