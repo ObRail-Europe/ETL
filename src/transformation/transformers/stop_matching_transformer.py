@@ -28,14 +28,17 @@ class StopMatchingTransformer(BaseTransformer):
         df_trip: DataFrame = kwargs["df_trip"]
         df_airports: DataFrame = kwargs["df_airports"]
 
-        self.logger.info("Matching gare ↔ aéroport...")
+        self.logger.info("StopMatching - étape 1/4: extraction des gares distinctes à partir de trip.")
 
         df_stops = self._extract_distinct_stops(df_trip)
+        self.logger.info("StopMatching - étape 2/4: matching géographique bucketisé gare ↔ aéroport.")
         df_matched = self._geo_bucket_matching(df_stops, df_airports)
+        self.logger.info("StopMatching - étape 3/4: ajout des gares/aéroports non matchés.")
         df_result = self._add_unmatched(df_matched, df_stops, df_airports)
+        self.logger.info("StopMatching - étape 4/4: sauvegarde du parquet de sortie.")
         self._save_parquet(df_result)
 
-        self.logger.info("Phase StopMatching terminée.")
+        self.logger.info("StopMatching terminé: table gare↔aéroport prête pour la comparaison train/avion.")
         return {"df_stop_matching": df_result}
 
     # ----------------------------------------------------------------
@@ -54,8 +57,7 @@ class StopMatchingTransformer(BaseTransformer):
             )
         )
         self.logger.debug(
-            "Arrêts distincts préparés (source, stop_id, stop_lat, stop_lon), "
-            "avec coordonnées non nulles"
+            "StopMatching: arrêts distincts préparés avec coordonnées valides (source, stop_id, lat/lon)."
         )
         return df_stops
 
@@ -107,7 +109,7 @@ class StopMatchingTransformer(BaseTransformer):
         )
 
         # jointure par bucket
-        self.logger.debug("Jointure geo-bucketing gares × aéroports...")
+        self.logger.debug("StopMatching: jointure bucketisée gares × aéroports puis calcul des distances.")
         df_paired = df_stops_b.join(
             F.broadcast(df_airports_b),
             (df_stops_b.search_lat_b == df_airports_b.apt_lat_b)
@@ -164,8 +166,7 @@ class StopMatchingTransformer(BaseTransformer):
         )
 
         self.logger.debug(
-            "Paires gare-aéroport préparées (meilleur match par gare + meilleur match "
-            "par aéroport, puis déduplication)"
+            "StopMatching: meilleurs couples retenus (best par gare + best par aéroport) puis déduplication."
         )
         return df_matched
 
@@ -205,8 +206,7 @@ class StopMatchingTransformer(BaseTransformer):
         )
 
         self.logger.debug(
-            "Stop matching final préparé : union des paires matchées, gares non matchées "
-            "et aéroports non matchés"
+            "StopMatching: dataset final construit (matchés + gares orphelines + aéroports orphelins)."
         )
         return df_result
 
@@ -214,8 +214,8 @@ class StopMatchingTransformer(BaseTransformer):
         """sauvegarde stop_matching.parquet"""
         cfg = self.config
 
-        self.logger.info("Sauvegarde stop_matching.parquet...")
+        self.logger.info("StopMatching sauvegarde: écriture de stop_matching.parquet...")
         df.coalesce(cfg.DIM_COALESCE_PARTITIONS).write.mode("overwrite").parquet(
             str(cfg.STOP_MATCHING_OUTPUT_PATH)
         )
-        self.logger.debug(f"stop_matching sauvegardé : {cfg.STOP_MATCHING_OUTPUT_PATH}")
+        self.logger.debug(f"StopMatching sauvegarde terminée: {cfg.STOP_MATCHING_OUTPUT_PATH}")

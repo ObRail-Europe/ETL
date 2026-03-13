@@ -43,10 +43,10 @@ class BackOnTrackTransformer(BaseTransformer):
             Si les fichiers BOTN sont manquants
         """
         cfg = self.config
-        self.logger.info("Chargement BOTN...")
+        self.logger.info("BOTN - étape 1/6: chargement des tables sources et jointures GTFS-like.")
 
         # chargement des 6 tables BOTN
-        self.logger.debug("Chargement des 6 tables Parquet BOTN...")
+        self.logger.debug("BOTN: lecture des 6 parquets (agencies, routes, stops, trips, calendar, trip_stop).")
         botn_path = cfg.BOTN_RAW_PATH
         df_agencies = self.spark.read.parquet(str(botn_path / "agencies.parquet"))
         df_routes = self.spark.read.parquet(str(botn_path / "routes.parquet"))
@@ -56,7 +56,7 @@ class BackOnTrackTransformer(BaseTransformer):
         df_stop_times = self.spark.read.parquet(str(botn_path / "trip_stop.parquet"))
 
         # jointures composites BOTN
-        self.logger.debug("Jointures composites BOTN (trips→routes→stops→agencies→calendar)...")
+        self.logger.debug("BOTN: assemblage du graphe trips→routes→stop_times→stops→agencies→calendar.")
 
         # drop des colonnes dupliquees dans les tables secondaires pour éviter
         # AMBIGUOUS_REFERENCE (version, countries, etc. présents dans plusieurs tables)
@@ -87,18 +87,18 @@ class BackOnTrackTransformer(BaseTransformer):
         # checkpoint post-jointures (tronque le lineage + matérialise)
         # eager=False : enchaînement linéaire immédiat, évite une action dédiée
         df_botn = df_botn.checkpoint(eager=False)
-        self.logger.debug("Checkpoint BOTN post-jointures matérialisé")
+        self.logger.debug("BOTN: checkpoint post-jointures posé pour limiter le lineage Spark.")
 
-        # dédoublonnage et renumérotation des trajets en Y
-        self.logger.debug("Dédoublonnage et renumérotation des trajets en Y...")
+        self.logger.info("BOTN - étape 2/6: normalisation structurelle des trajets et calendriers.")
+        self.logger.debug("BOTN: dédoublonnage et renumérotation des trajets en Y.")
         df_botn = self._renumber_stop_sequences(df_botn)
 
         # normalisation des dates start_date/end_date → YYYYMMDD
-        self.logger.debug("Normalisation des dates → YYYYMMDD...")
+        self.logger.debug("BOTN: normalisation des dates start/end au format YYYYMMDD.")
         df_botn = self._normalize_dates(df_botn)
 
         # masque jours de semaine
-        self.logger.debug("Construction du masque days_of_week et colonnes constantes...")
+        self.logger.debug("BOTN: construction days_of_week et colonnes constantes de compatibilité.")
         day_cols = cfg.DAY_COLS
         df_botn = (
             df_botn
@@ -115,7 +115,8 @@ class BackOnTrackTransformer(BaseTransformer):
         )
 
         # casts + nettoyage global
-        self.logger.debug("Casts et nettoyage global BOTN...")
+        self.logger.info("BOTN - étape 3/6: nettoyage qualité (types, valeurs vides, coordonnées invalides).")
+        self.logger.debug("BOTN: casts techniques et nettoyage global des champs texte.")
         df_botn = (
             df_botn
             .withColumn("stop_lat", F.col("stop_lat").cast("double"))
@@ -125,7 +126,7 @@ class BackOnTrackTransformer(BaseTransformer):
         df_botn = replace_blank_with_nulls(df_botn)
 
         # filtre stop_sequence nul et coordonnees invalides
-        self.logger.debug("Filtre stop_sequence nul et coordonnées invalides...")
+        self.logger.debug("BOTN: retrait des trips avec stop_sequence nul ou coordonnées invalides.")
         df_botn = df_botn.filter(F.col("stop_sequence").isNotNull())
         bad_botn_trips = (
             df_botn
@@ -136,15 +137,16 @@ class BackOnTrackTransformer(BaseTransformer):
         df_botn = df_botn.join(F.broadcast(bad_botn_trips), ["trip_id"], "left_anti")
 
         # correction des fuseaux horaires
-        self.logger.debug("Correction des fuseaux horaires BOTN...")
+        self.logger.info("BOTN - étape 4/6: enrichissement métier (timezone + opérateurs composites).")
+        self.logger.debug("BOTN: correction des fuseaux horaires vers des labels IANA cohérents.")
         df_botn = apply_tz_mapping(df_botn, self.config.TZ_MAPPING)
 
         # résolution des agency_name composites
-        self.logger.debug("Résolution des agency_id composites (ex: CFM/CFR)...")
+        self.logger.debug("BOTN: résolution des agency_id composites (ex: CFM/CFR).")
         df_botn = self._resolve_composite_agency_names(df_botn, df_agencies, df_trips)
 
-        #Calcul Haversine inter-arrêts
-        self.logger.debug("Calcul des distances Haversine inter-arrêts BOTN...")
+        self.logger.info("BOTN - étape 5/6: calcul des distances inter-arrêts et purge des segments invalides.")
+        self.logger.debug("BOTN: calcul Haversine inter-arrêts avec facteur de détour rail.")
         w_seq = Window.partitionBy("trip_id").orderBy("stop_sequence")
         df_botn = (
             df_botn
@@ -162,10 +164,10 @@ class BackOnTrackTransformer(BaseTransformer):
         # checkpoint post-Haversine (tronque le lineage + matérialise)
         # eager=False : pipeline linéaire, matérialisation au prochain job
         df_botn = df_botn.checkpoint(eager=False)
-        self.logger.debug("Checkpoint BOTN post-Haversine matérialisé")
+        self.logger.debug("BOTN: checkpoint post-Haversine posé pour stabiliser les étapes suivantes.")
 
         # filtre segments à distance nulle ou invalide
-        self.logger.debug("Filtre des segments à distance nulle ou invalide...")
+        self.logger.debug("BOTN: exclusion des trips comportant des segments nuls/incohérents.")
         bad_botn_segments = (
             df_botn
             .filter(
@@ -179,11 +181,11 @@ class BackOnTrackTransformer(BaseTransformer):
         )
         df_botn = df_botn.join(F.broadcast(bad_botn_segments), ["trip_id"], "left_anti")
 
-        # zlignement des types string avec MDB
-        self.logger.debug("Alignement des types string avec le schéma MDB...")
+        self.logger.info("BOTN - étape 6/6: alignement final des types avec le schéma MDB.")
+        self.logger.debug("BOTN: alignement final des types string pour union propre avec MDB.")
         df_botn = self._align_types_with_mdb(df_botn)
 
-        self.logger.info("Phase BOTN terminée.")
+        self.logger.info("BOTN terminé: dataset normalisé prêt pour la phase de merge.")
         return {"df_botn": df_botn}
 
     # -----------------------------------------------------------------

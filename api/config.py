@@ -14,30 +14,33 @@ load_dotenv()
 class ApiConfig:
     """Configuration de l'API — PG credentials, pool, pagination, rate limit."""
 
-    # PostgreSQL (mêmes variables que le pipeline ETL)
+    # On réutilise les mêmes variables que la pipeline ETL pour garder un
+    # paramétrage homogène entre ingestion et exposition API.
     PG_HOST: str = os.getenv("PG_HOST", "localhost")
     PG_PORT: str = os.getenv("PG_PORT", "5432")
     PG_DB: str = os.getenv("PG_DB", "obrail")
     PG_USER: str = os.getenv("PG_USER", "obrail")
     PG_PASSWORD: str = os.getenv("PG_PASSWORD", "")
 
-    # Rate limiting — requêtes par minute par IP (0 = désactivé)
+    # Cette limite protège l'API contre les usages abusifs tout en restant
+    # simple à ajuster selon l'environnement.
     RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "100"))
 
-    # Serveur
+    # Paramètres de bind du serveur FastAPI/Uvicorn.
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
 
-    # Connection pool psycopg2
+    # Le pool limite le coût de création des connexions sur les endpoints
+    # très sollicités.
     DB_POOL_MIN: int = int(os.getenv("DB_POOL_MIN", "2"))
     DB_POOL_MAX: int = int(os.getenv("DB_POOL_MAX", "10"))
 
-    # Pagination
+    # Bornes communes de pagination côté API.
     DEFAULT_PAGE_SIZE: int = 25
     MAX_PAGE_SIZE: int = 500
 
-    # CSV export
+    # Garde-fou pour éviter des exports trop lourds en un seul appel.
     CSV_MAX_ROWS: int = 500_000
 
-    # Authentification — Import endpoint
+    # Token dédié à l'endpoint d'import, séparé des accès de consultation.
     IMPORT_TOKEN: str = os.getenv("API_IMPORT_TOKEN", "default_dev_token_change_in_production")

@@ -18,7 +18,7 @@ from ..utils.csv_export import stream_csv_response
 router = APIRouter()
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers partagés entre endpoints paginés et exports CSV.
 
 def _build_routes_where(
     mode, source, departure_country, arrival_country,
@@ -31,7 +31,8 @@ def _build_routes_where(
     wb = WhereBuilder()
     wb.add_exact("mode", mode)
     wb.add_exact("source", source)
-    # partition pruning: departure_country
+    # On force le code pays en uppercase pour garder un filtre cohérent et
+    # profiter du partition pruning côté table cible.
     if departure_country:
         wb.add_exact("departure_country", departure_country.upper())
     if arrival_country:
@@ -61,7 +62,8 @@ def _build_compare_where(
     """Construit la clause WHERE pour gold_compare_best (sections 3.3 et 3.4)."""
     wb = WhereBuilder()
     wb.add_ilike("departure_city", departure_city)
-    # partition pruning: departure_country
+    # Même logique ici : pays normalisé pour rester compatible avec le
+    # partition pruning sur les données chargées.
     if departure_country:
         wb.add_exact("departure_country", departure_country.upper())
     wb.add_ilike("arrival_city", arrival_city)
@@ -75,8 +77,6 @@ def _build_compare_where(
     wb.add_like("days_of_week", days_of_week)
     return wb
 
-
-# ── 3.1 GET /routes ──────────────────────────────────────────────────────────
 
 @router.get("/routes")
 def list_routes(
@@ -104,7 +104,8 @@ def list_routes(
     conn=Depends(get_db),
 ):
     """Consultation paginée de gold_routes avec filtrage fin."""
-    # raw SQL: spec section 3.1
+    # Le SQL reste explicite ici pour garder un contrôle fin sur les colonnes,
+    # le tri et le coût des requêtes côté PostgreSQL.
     wb = _build_routes_where(
         mode, source, departure_country, arrival_country,
         departure_city, arrival_city, departure_station, arrival_station,
@@ -132,8 +133,6 @@ def list_routes(
         pagination["page"], pagination["page_size"],
     )
 
-
-# ── 3.2 GET /routes/download ─────────────────────────────────────────────────
 
 @router.get("/routes/download")
 def download_routes(
@@ -160,7 +159,8 @@ def download_routes(
     conn=Depends(get_db),
 ):
     """Téléchargement CSV de gold_routes. Limite 500k lignes."""
-    # raw SQL: spec section 3.2
+    # L'export réutilise exactement les mêmes filtres que la vue paginée pour
+    # garantir des résultats cohérents entre consultation et CSV.
     wb = _build_routes_where(
         mode, source, departure_country, arrival_country,
         departure_city, arrival_city, departure_station, arrival_station,
@@ -187,8 +187,6 @@ def download_routes(
     )
 
 
-# ── 3.3 GET /compare ─────────────────────────────────────────────────────────
-
 @router.get("/compare")
 def list_compare(
     departure_city: str | None = Query(None),
@@ -207,7 +205,8 @@ def list_compare(
     conn=Depends(get_db),
 ):
     """Consultation paginée de gold_compare_best."""
-    # raw SQL: spec section 3.3
+    # Cette requête expose directement la table de comparaison pré-calculée,
+    # ce qui évite de refaire le matching train/avion à la volée.
     wb = _build_compare_where(
         departure_city, departure_country, arrival_city, arrival_country,
         best_mode, min_train_duration, max_train_duration,
@@ -234,8 +233,6 @@ def list_compare(
     )
 
 
-# ── 3.4 GET /compare/download ────────────────────────────────────────────────
-
 @router.get("/compare/download")
 def download_compare(
     departure_city: str | None = Query(None),
@@ -253,7 +250,7 @@ def download_compare(
     conn=Depends(get_db),
 ):
     """Export CSV de gold_compare_best. Limite 500k lignes."""
-    # raw SQL: spec section 3.4
+    # Même principe que /compare avec un flux complet destiné à l'export CSV.
     wb = _build_compare_where(
         departure_city, departure_country, arrival_city, arrival_country,
         best_mode, min_train_duration, max_train_duration,

@@ -8,7 +8,8 @@ avec des valeurs utilisateur. Le ORDER BY dynamique est validé contre une white
 from psycopg2.extras import RealDictCursor
 
 
-# ── Protection contre les wildcards LIKE ────────────────────────────────────
+# Évite qu'un terme de recherche utilisateur déclenche involontairement des
+# wildcards SQL lors des filtres ILIKE.
 
 def escape_like(value: str) -> str:
     """
@@ -20,7 +21,8 @@ def escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-# ── Whitelists ORDER BY ──────────────────────────────────────────────────────
+# Ces whitelists bornent les colonnes triables pour bloquer l'injection via
+# ORDER BY dynamique.
 
 ROUTES_SORTABLE = {
     "departure_country", "arrival_country", "departure_city", "arrival_city",
@@ -62,8 +64,8 @@ def execute_paginated(
     """
     offset = (page - 1) * page_size
 
-    # Requête de comptage : enlève tout après le dernier ORDER BY + LIMIT
-    # Plus fiable : on passe une count_query séparée
+    # Le comptage est géré via une requête dédiée ; on évite ainsi les
+    # manipulations fragiles de SQL texte pour retirer LIMIT/OFFSET.
     data_params = params + [page_size, offset]
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -92,11 +94,11 @@ def execute_paginated_with_count(
     full_data_params = data_params + [page_size, offset]
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        # Total
+        # Le total est calculé avant pagination pour alimenter correctement l'UI.
         cur.execute(count_query, count_params)
         total = cur.fetchone()["total"]
 
-        # Data
+        # On récupère ensuite uniquement la fenêtre demandée.
         cur.execute(data_query, full_data_params)
         rows = cur.fetchall()
 

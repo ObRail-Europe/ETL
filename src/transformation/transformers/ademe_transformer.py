@@ -27,15 +27,25 @@ class AdemeTransformer(BaseTransformer):
         return "ademe"
 
     def transform(self, **kwargs: Any) -> dict[str, DataFrame]:
-        self.logger.info("Chargement ADEME...")
+        self.logger.info("ADEME - étape 1/5: chargement et filtrage de la base carbone aérienne.")
 
         df = self._load_and_filter()
+        self.logger.debug("ADEME - étape 1/5 terminée: lignes brutes utiles isolées.")
+
+        self.logger.info("ADEME - étape 2/5: catégorisation par taille d'appareil et distance.")
         df = self._parse_and_categorize(df)
+        self.logger.debug("ADEME - étape 2/5 terminée: catégories seat/distance prêtes.")
+
+        self.logger.info("ADEME - étape 3/5: agrégation des facteurs de base.")
         df_base = self._aggregate(df)
+
+        self.logger.info("ADEME - étape 4/5: calcul des facteurs pondérés métier.")
         df_full = self._add_weighted_mappings(df_base)
+
+        self.logger.info("ADEME - étape 5/5: projection sur le schéma emission unifié.")
         df_full = self._format_unified_schema(df_full)
 
-        self.logger.info("Phase ADEME terminée.")
+        self.logger.info("ADEME terminé: table des facteurs d'émission aérien prête.")
         return {"df_ademe": df_full}
 
     # -----------------------------------------------------------------
@@ -48,14 +58,14 @@ class AdemeTransformer(BaseTransformer):
         df = self.spark.read.parquet(
             str(cfg.ADEME_RAW_PATH / "ademe_base_carbone_aerien.parquet")
         )
-        self.logger.debug("ADEME brut chargé")
+        self.logger.debug("ADEME: parquet brut chargé depuis data/raw/ademe.")
 
         df = (
             df
             .filter(F.col("Statut_de_l'élément") == "Valide générique")
             .filter(F.col("Type_poste").isNull())
         )
-        self.logger.debug("Filtrage ADEME appliqué: statut valide générique + Type_poste NULL")
+        self.logger.debug("ADEME: filtrage appliqué (Statut='Valide générique' et Type_poste NULL).")
         return df
 
     def _parse_and_categorize(self, df: DataFrame) -> DataFrame:
@@ -90,7 +100,7 @@ class AdemeTransformer(BaseTransformer):
             .groupBy("seat_category", "distance_category")
             .agg(F.avg("Total_poste_non_décomposé").alias("emission_kgCO2_per_pkm"))
         )
-        self.logger.debug("Agrégation ADEME par (seat_category, distance_category) terminée")
+        self.logger.debug("ADEME: agrégation moyenne terminée par (seat_category, distance_category).")
         return df_agg
 
     def _add_weighted_mappings(self, df_base: DataFrame) -> DataFrame:
@@ -103,7 +113,7 @@ class AdemeTransformer(BaseTransformer):
             key = f"{row['seat_category']}_{row['distance_category']}"
             base_dict[key] = row["emission_kgCO2_per_pkm"]
 
-        self.logger.debug(f"Facteurs de base : {base_dict}")
+        self.logger.debug(f"ADEME: facteurs de base collectés pour pondération : {base_dict}")
 
         # calculer les 7 mappings pondérés
         mapping_rows = []

@@ -28,16 +28,21 @@ class OurAirportsTransformer(BaseTransformer):
 
     def transform(self, **kwargs: Any) -> dict[str, DataFrame]:
         df_ademe: DataFrame = kwargs["df_ademe"]
+        _ = df_ademe  # conservé pour compatibilité d'interface des transformeurs
 
-        self.logger.info("Chargement OurAirports...")
+        self.logger.info("OurAirports - étape 1/5: chargement et filtrage des aéroports européens.")
 
         df_airports = self._load_and_filter_airports()
+        self.logger.info("OurAirports - étape 2/5: enrichissement ville/pays via geo-bucketing GeoNames.")
         df_airports = self._geo_bucket_city_enrichment(df_airports)
+        self.logger.info("OurAirports - étape 3/5: génération des paires origine-destination et distances.")
         df_routes = self._build_routes(df_airports)
+        self.logger.info("OurAirports - étape 4/5: application des règles métier de scénario aérien.")
         df_routes = self._apply_scenario_rules(df_routes)
+        self.logger.info("OurAirports - étape 5/5: attribution des emission_ref ADEME.")
         df_routes = self._add_emission_ref(df_routes)
 
-        self.logger.info("Phase OurAirports terminée.")
+        self.logger.info("OurAirports terminé: aéroports enrichis et routes aériennes prêtes.")
         return {"df_fly_trip": df_routes, "df_airports": df_airports}
 
     # -----------------------------------------------------------------
@@ -56,8 +61,7 @@ class OurAirportsTransformer(BaseTransformer):
         )
 
         self.logger.debug(
-            "Aéroports bruts chargés (jointure country_name + filtres Europe/type + "
-            "exclusion RU hors zone + dédup ident à suivre)"
+            "OurAirports: fichiers airports/countries chargés, préparation des filtres Europe et types d'aéroport."
         )
 
         # jointure pour country_name
@@ -95,7 +99,7 @@ class OurAirportsTransformer(BaseTransformer):
         df_airports = df_airports.dropDuplicates(["ident"])
 
         self.logger.debug(
-            "Aéroports européens filtrés et dédupliqués (clés: ident, iso_country, type)"
+            "OurAirports: filtrage terminé (Europe + types principaux + RU géographique) et déduplication par ident."
         )
 
         return df_airports.select(
@@ -113,7 +117,7 @@ class OurAirportsTransformer(BaseTransformer):
         """
         cfg = self.config
 
-        self.logger.debug("Geo-bucketing GeoNames pour les aéroports...")
+        self.logger.debug("OurAirports: préparation des buckets GeoNames (taille 0.5°) pour le matching ville.")
         df_geonames = (
             self.spark.read.parquet(str(cfg.GEONAMES_RAW_PATH / "cities1000.parquet"))
             .withColumn("lat_bucket", F.floor(F.col("latitude") / cfg.GEO_BUCKET_SIZE))
@@ -140,7 +144,7 @@ class OurAirportsTransformer(BaseTransformer):
         )
 
         # jointure par bucket
-        self.logger.debug("Jointure geo-bucketing aéroports × villes...")
+        self.logger.debug("OurAirports: jointure bucketisée aéroports × GeoNames puis calcul Haversine.")
         df_geo_matched = df_airports_buckets.join(
             F.broadcast(df_geonames),
             (df_airports_buckets.search_lat_b == df_geonames.lat_bucket)
@@ -175,7 +179,7 @@ class OurAirportsTransformer(BaseTransformer):
             )
         )
 
-        self.logger.debug("Application des villes mappées aux aéroports...")
+        self.logger.debug("OurAirports: application de la meilleure ville candidate par aéroport.")
         return (
             df_airports
             .join(df_closest_city, "ident", "left")
@@ -191,7 +195,7 @@ class OurAirportsTransformer(BaseTransformer):
 
     def _build_routes(self, df_airports: DataFrame) -> DataFrame:
         """cross-join origin × destination + distance Haversine"""
-        self.logger.debug("Construction des trajets (cross-join + Haversine)...")
+        self.logger.debug("OurAirports: construction des routes (cross-join sans self-join puis distance Haversine).")
         cfg = self.config
 
         df_origins = df_airports.select(
@@ -237,12 +241,12 @@ class OurAirportsTransformer(BaseTransformer):
             F.col("distance_km") >= cfg.FLY_MIN_DISTANCE_KM
         )
 
-        self.logger.debug("Trajets avec distances calculés.")
+        self.logger.debug("OurAirports: distances calculées et trajets < seuil minimal supprimés.")
         return df_routes
 
     def _apply_scenario_rules(self, df: DataFrame) -> DataFrame:
         """applique les 7 règles du scénario 1 et ajoute trajet_type"""
-        self.logger.debug("Application des règles du scénario 1...")
+        self.logger.debug("OurAirports: application des 7 règles de scénario pour typer les corridors.")
 
         ot = F.col("origin_type")
         dt = F.col("dest_type")
@@ -303,7 +307,7 @@ class OurAirportsTransformer(BaseTransformer):
         df = df.dropDuplicates(["origin_id", "dest_id"])
 
         self.logger.debug(
-            "Trajets scénario 1 préparés (règles appliquées + dédup origin_id/dest_id)"
+            "OurAirports: règles appliquées, trajet_type attribué, puis déduplication origin_id/dest_id effectuée."
         )
         return df
 
@@ -320,5 +324,5 @@ class OurAirportsTransformer(BaseTransformer):
 
         df = df.withColumn("emission_ref", mapping_expr)
 
-        self.logger.debug("emission_ref ajouté aux trajets.")
+        self.logger.debug("OurAirports: emission_ref ADEME ajouté sur chaque trajet_type.")
         return df

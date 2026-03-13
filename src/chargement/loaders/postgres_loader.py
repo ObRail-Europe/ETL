@@ -29,12 +29,13 @@ class PostgresLoader:
         self.logger = logger
         self.config = config
 
-    # ──────────────────────────────────────────────────────────────
-    # Connexion psycopg2
-    # ──────────────────────────────────────────────────────────────
-
     def _get_connection(self):
-        """Ouvre une connexion psycopg2 vers PostgreSQL."""
+        """
+        Ouvre une connexion psycopg2 vers PostgreSQL.
+
+        On utilise une connexion dédiée par opération pour limiter les effets
+        de bord entre étapes (schema init, upsert, post-load).
+        """
         cfg = self.config
         return psycopg2.connect(
             host=cfg.PG_HOST,
@@ -43,10 +44,6 @@ class PostgresLoader:
             user=cfg.PG_USER,
             password=cfg.PG_PASSWORD,
         )
-
-    # ──────────────────────────────────────────────────────────────
-    # Initialisation du schéma
-    # ──────────────────────────────────────────────────────────────
 
     def init_schema(self) -> dict[str, Any]:
         """
@@ -57,7 +54,7 @@ class PostgresLoader:
         dict avec statut et éventuelles erreurs
         """
         sql_path: Path = self.config.SQL_INIT_SCRIPT
-        self.logger.debug(f"Initialisation du schéma PG depuis : {sql_path}")
+        self.logger.debug(f"PG init_schema: lecture du script SQL depuis {sql_path}")
 
         if not sql_path.exists():
             msg = f"Script SQL introuvable : {sql_path}"
@@ -71,6 +68,7 @@ class PostgresLoader:
             conn.autocommit = False
             try:
                 with conn.cursor() as cur:
+                    self.logger.debug("PG init_schema: exécution du script DDL dans une transaction dédiée.")
                     cur.execute(sql_content)
                     conn.commit()
             except Exception:
@@ -79,16 +77,12 @@ class PostgresLoader:
             finally:
                 conn.close()
 
-            self.logger.info("Schéma PostgreSQL initialisé.")
+            self.logger.info("PG init_schema terminé: schéma, partitions, index et vues initialisés.")
             return {"status": "SUCCESS"}
 
         except Exception as exc:
             self.logger.error(f"Erreur d'initialisation du schéma : {exc}")
             return {"status": "FAILED", "error": str(exc)}
-
-    # ──────────────────────────────────────────────────────────────
-    # Chargement des DataFrames via JDBC
-    # ──────────────────────────────────────────────────────────────
 
     def load_dataframe(
         self,
@@ -113,7 +107,7 @@ class PostgresLoader:
         dict avec statut et nombre de lignes insérées
         """
         cfg = self.config
-        self.logger.debug(f"Chargement JDBC → {table_name} (mode={mode})…")
+        self.logger.debug(f"PG JDBC: écriture vers {table_name} (mode={mode}, batch={cfg.JDBC_BATCH_SIZE}).")
 
         try:
             (
@@ -125,22 +119,19 @@ class PostgresLoader:
                 .option("password", cfg.PG_PASSWORD)
                 .option("driver", "org.postgresql.Driver")
                 .option("batchsize", cfg.JDBC_BATCH_SIZE)
-                # rewriteBatchedStatements accélère massivement les INSERT en lot
+                # Ce flag réduit fortement le coût des inserts en lot lors de
+                # charges volumineuses.
                 .option("rewriteBatchedStatements", "true")
                 .mode(mode)
                 .save()
             )
 
-            self.logger.info(f"{table_name} chargée.")
+            self.logger.info(f"PG JDBC terminé: table {table_name} écrite avec succès.")
             return {"status": "SUCCESS"}
 
         except Exception as exc:
             self.logger.error(f"Erreur JDBC vers {table_name} : {exc}")
             return {"status": "FAILED", "error": str(exc)}
-
-    # ──────────────────────────────────────────────────────────────
-    # Post-chargement : index & ANALYZE
-    # ──────────────────────────────────────────────────────────────
 
     def post_load(self) -> dict[str, Any]:
         """
@@ -156,7 +147,7 @@ class PostgresLoader:
         dict avec statut et éventuelles erreurs
         """
         sql_path: Path = self.config.SQL_POST_LOAD_SCRIPT
-        self.logger.debug(f"Post-chargement PG depuis : {sql_path}")
+        self.logger.debug(f"PG post_load: lecture du script d'optimisation depuis {sql_path}")
 
         if not sql_path.exists():
             msg = f"Script post-load introuvable : {sql_path}"
@@ -170,6 +161,7 @@ class PostgresLoader:
             conn.autocommit = False
             try:
                 with conn.cursor() as cur:
+                    self.logger.debug("PG post_load: exécution des index et ANALYZE dans une transaction contrôlée.")
                     cur.execute(sql_content)
                     conn.commit()
             except Exception:
@@ -178,16 +170,12 @@ class PostgresLoader:
             finally:
                 conn.close()
 
-            self.logger.info("Index et ANALYZE post-chargement appliqués.")
+            self.logger.info("PG post_load terminé: index et statistiques ANALYZE appliqués.")
             return {"status": "SUCCESS"}
 
         except Exception as exc:
             self.logger.error(f"Erreur post-chargement : {exc}")
             return {"status": "FAILED", "error": str(exc)}
-
-    # ──────────────────────────────────────────────────────────────
-    # Upsert via table de staging
-    # ──────────────────────────────────────────────────────────────
 
     def upsert_via_staging(
         self,
@@ -208,11 +196,13 @@ class PostgresLoader:
         Résultat : les sources non concernées par ce run conservent leurs données.
         """
         staging = f"{table_name}_staging"
-        self.logger.debug(f"Upsert {table_name} via staging {staging}…")
+        self.logger.debug(f"PG upsert: début pour {table_name} via staging temporaire {staging}.")
 
-        # Étape 1 : staging
+        # On passe par une table de staging pour garder une transaction SQL
+        # lisible et atomique côté PostgreSQL.
         load_result = self.load_dataframe(df, staging, mode="overwrite")
         if load_result["status"] == "FAILED":
+            self.logger.error(f"PG upsert: échec de chargement staging {staging} pour {table_name}.")
             return load_result
 
         try:
@@ -220,7 +210,8 @@ class PostgresLoader:
             conn.autocommit = False
             try:
                 with conn.cursor() as cur:
-                    # Étape 2 : sources présentes dans le staging
+                    # On cible uniquement les sources présentes dans ce run
+                    # afin de préserver les autres données historiques.
                     cur.execute(
                         sql.SQL("SELECT DISTINCT source FROM {}").format(
                             sql.Identifier(staging)
@@ -239,10 +230,11 @@ class PostgresLoader:
                         return {"status": "SUCCESS", "deleted": 0, "inserted": 0}
 
                     self.logger.debug(
-                        f"{table_name} : mise à jour pour {len(sources)} source(s) : {sources}"
+                        f"PG upsert: {table_name} - {len(sources)} source(s) concernée(s) dans le run: {sources}"
                     )
 
-                    # Étape 3 : suppression des lignes des sources concernées
+                    # On supprime d'abord les lignes impactées pour conserver
+                    # une sémantique d'upsert simple et déterministe.
                     placeholders = sql.SQL(", ").join(
                         sql.Placeholder() for _ in sources
                     )
@@ -252,8 +244,10 @@ class PostgresLoader:
                         sources,
                     )
                     deleted = cur.rowcount
+                    self.logger.debug(f"PG upsert: {table_name} - {deleted} ligne(s) supprimée(s) avant réinsertion.")
 
-                    # Étape 4 : insertion depuis le staging
+                    # Le rechargement depuis staging garantit un état cohérent
+                    # pour l'ensemble des sources ciblées.
                     cur.execute(
                         sql.SQL("INSERT INTO {} SELECT * FROM {}").format(
                             sql.Identifier(table_name),
@@ -261,8 +255,10 @@ class PostgresLoader:
                         )
                     )
                     inserted = cur.rowcount
+                    self.logger.debug(f"PG upsert: {table_name} - {inserted} ligne(s) réinsérée(s) depuis staging.")
 
-                    # Étape 5 : suppression du staging
+                    # Le nettoyage explicite de la staging évite d'accumuler
+                    # des artefacts entre exécutions.
                     cur.execute(
                         sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(staging))
                     )
@@ -275,18 +271,12 @@ class PostgresLoader:
             finally:
                 conn.close()
 
-            self.logger.info(
-                f"{table_name} : {deleted} ligne(s) remplacées, {inserted} insérée(s)."
-            )
+            self.logger.info(f"PG upsert terminé: {table_name} ({deleted} supprimées, {inserted} insérées).")
             return {"status": "SUCCESS", "deleted": deleted, "inserted": inserted}
 
         except Exception as exc:
             self.logger.error(f"Erreur upsert {table_name} : {exc}")
             return {"status": "FAILED", "error": str(exc)}
-
-    # ──────────────────────────────────────────────────────────────
-    # Truncate (réinitialisation complète – gardé pour usage explicite)
-    # ──────────────────────────────────────────────────────────────
 
     def truncate_table(self, table_name: str) -> bool:
         """
@@ -295,7 +285,7 @@ class PostgresLoader:
         Utile pour recharger une table sans DROP/CREATE.
         Returns True si succès.
         """
-        self.logger.debug(f"TRUNCATE {table_name}…")
+        self.logger.debug(f"PG truncate: demande de vidage complet de {table_name}.")
         try:
             conn = self._get_connection()
             conn.autocommit = True
@@ -306,7 +296,7 @@ class PostgresLoader:
                     ))
             finally:
                 conn.close()
-            self.logger.debug(f"{table_name} vidée")
+            self.logger.debug(f"PG truncate terminé: table {table_name} vidée.")
             return True
         except Exception as exc:
             self.logger.error(f"Erreur TRUNCATE {table_name} : {exc}")

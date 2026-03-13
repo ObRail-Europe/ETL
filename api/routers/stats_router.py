@@ -12,12 +12,11 @@ from ..utils.query_helpers import execute_query, WhereBuilder
 router = APIRouter()
 
 
-# ── 8.1 GET /stats/operators ──────────────────────────────────────────────────
-
 @router.get("/stats/operators")
 def stats_operators(conn=Depends(get_db)):
     """Classement des opérateurs ferroviaires par volume et couverture."""
-    # raw SQL: spec section 8.1
+    # L'agrégation est gardée côté SQL pour produire un classement opérateur
+    # directement exploitable.
     query = """
         SELECT
             agency_name,
@@ -40,8 +39,6 @@ def stats_operators(conn=Depends(get_db)):
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 8.2 GET /stats/distances ─────────────────────────────────────────────────
-
 @router.get("/stats/distances")
 def stats_distances(
     mode: str | None = Query(None, pattern="^(train|flight)$"),
@@ -50,11 +47,12 @@ def stats_distances(
     conn=Depends(get_db),
 ):
     """Distribution des distances par mode et type jour/nuit."""
-    # raw SQL: spec section 8.2
+    # Le bucketing distance est calculé en base pour éviter des regroupements
+    # coûteux côté client.
     wb = WhereBuilder()
     wb.add_raw("distance_km IS NOT NULL")
     wb.add_exact("mode", mode)
-    # partition pruning: departure_country
+    # Ce filtre réduit le périmètre de scan quand un pays est ciblé.
     if departure_country:
         wb.add_exact("departure_country", departure_country.upper())
 
@@ -77,12 +75,11 @@ def stats_distances(
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 8.3 GET /stats/emissions-by-distance ──────────────────────────────────────
-
 @router.get("/stats/emissions-by-distance")
 def stats_emissions_by_distance(conn=Depends(get_db)):
     """Émissions moyennes par tranche de distance."""
-    # raw SQL: spec section 8.3
+    # Cette distribution sert à comparer l'évolution des émissions selon la
+    # longueur des trajets.
     query = """
         SELECT
             mode,

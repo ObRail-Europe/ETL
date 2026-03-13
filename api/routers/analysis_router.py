@@ -17,18 +17,17 @@ from ..utils.query_helpers import (
 router = APIRouter()
 
 
-# ── 6.1 GET /analysis/day-night/coverage ──────────────────────────────────────
-
 @router.get("/analysis/day-night/coverage")
 def day_night_coverage(
     departure_country: str | None = Query(None, min_length=2, max_length=2),
     conn=Depends(get_db),
 ):
     """Couverture des trains de jour vs nuit par pays."""
-    # raw SQL: spec section 6.1
+    # Cette vue agrégée permet de comparer rapidement l'offre jour/nuit
+    # par pays sans retraitement applicatif.
     wb = WhereBuilder()
     wb.add_raw("mode = 'train'")
-    # partition pruning: departure_country
+    # Le filtre pays est appliqué tôt pour réduire le coût de l'agrégation.
     if departure_country:
         wb.add_exact("departure_country", departure_country.upper())
 
@@ -53,15 +52,14 @@ def day_night_coverage(
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 6.2 GET /analysis/day-night/emissions ─────────────────────────────────────
-
 @router.get("/analysis/day-night/emissions")
 def day_night_emissions(
     departure_country: str | None = Query(None, min_length=2, max_length=2),
     conn=Depends(get_db),
 ):
     """Comparaison des émissions CO₂ jour vs nuit par pays."""
-    # raw SQL: spec section 6.2
+    # On garde une agrégation SQL directe pour comparer jour/nuit avec les
+    # mêmes hypothèses de calcul par pays.
     wb = WhereBuilder()
     wb.add_raw("mode = 'train'")
     if departure_country:
@@ -87,8 +85,6 @@ def day_night_emissions(
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 6.3 GET /analysis/day-night/compare ───────────────────────────────────────
-
 @router.get("/analysis/day-night/compare")
 def day_night_compare(
     origin: str = Query(..., min_length=1, max_length=100),
@@ -96,7 +92,8 @@ def day_night_compare(
     conn=Depends(get_db),
 ):
     """Comparaison jour vs nuit pour une paire O/D spécifique."""
-    # raw SQL: spec section 6.3
+    # Cette requête sert à comparer une paire O/D précise en séparant clairement
+    # les options jour et nuit.
     query = """
         SELECT
             is_night_train,
@@ -122,7 +119,8 @@ def day_night_compare(
         key = "night_train" if row.get("is_night_train") else "day_train"
         result[key] = row
 
-    # Déterminer le meilleur mode
+    # Le meilleur mode est choisi sur la moyenne d'émissions quand les deux
+    # classes sont disponibles.
     day = result.get("day_train", {})
     night = result.get("night_train", {})
     if day and night:
@@ -132,8 +130,6 @@ def day_night_compare(
 
     return result
 
-
-# ── 6.4 GET /analysis/day-night/routes ────────────────────────────────────────
 
 @router.get("/analysis/day-night/routes")
 def day_night_routes(
@@ -146,10 +142,11 @@ def day_night_routes(
     conn=Depends(get_db),
 ):
     """Liste des routes avec classification jour/nuit."""
-    # raw SQL: spec section 6.4
+    # Endpoint orienté exploration détaillée, avec pagination pour rester stable
+    # même sur de gros volumes.
     wb = WhereBuilder()
     wb.add_raw("mode = 'train'")
-    # partition pruning: departure_country
+    # On pousse le filtre pays dans le WHERE pour bénéficier du pruning.
     if departure_country:
         wb.add_exact("departure_country", departure_country.upper())
     if arrival_country:
@@ -190,12 +187,11 @@ def day_night_routes(
     )
 
 
-# ── 6.5 GET /analysis/day-night/summary ───────────────────────────────────────
-
 @router.get("/analysis/day-night/summary")
 def day_night_summary(conn=Depends(get_db)):
     """Résumé agrégé jour/nuit au niveau européen."""
-    # raw SQL: spec section 6.5
+    # Résumé global conçu pour alimenter les KPIs de synthèse sans calcul côté
+    # client.
     query = """
         SELECT
             is_night_train,

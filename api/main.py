@@ -27,7 +27,8 @@ from .routers import (
     stats_router,
 )
 
-# ── Rate limiter (par IP, 100 req/min par défaut) ─────────────────────────────
+# La limite par défaut reste configurable via .env pour adapter facilement
+# l'API entre usage local, staging et production.
 _rate_limit = f"{ApiConfig.RATE_LIMIT_PER_MINUTE}/minute"
 limiter = Limiter(key_func=get_remote_address, default_limits=[_rate_limit])
 
@@ -47,7 +48,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Rate limiting middleware (appliqué à toutes les routes sauf exemption)
+# Le middleware s'applique globalement ; les endpoints critiques peuvent
+# ensuite être explicitement exemptés quand c'est justifié.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
@@ -62,8 +64,8 @@ app.add_middleware(
 
 PREFIX = "/api/v1"
 
-# search_router AVANT consultation_router pour que /routes/search
-# matche avant /routes/{trip_id}
+# L'ordre des routes évite que le chemin statique /routes/search soit capturé
+# par la route paramétrée /routes/{trip_id}.
 app.include_router(import_router.router, prefix=PREFIX, tags=["Import"])
 app.include_router(referential_router.router, prefix=PREFIX, tags=["Référentiel"])
 app.include_router(search_router.router, prefix=PREFIX, tags=["Recherche"])

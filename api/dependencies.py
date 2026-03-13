@@ -23,7 +23,7 @@ def pagination_params(
 def verify_import_token(request: Request) -> None:
     """Valide le Bearer token pour l'accès à l'endpoint /import.
     
-    Extrait le token depuis l'en-tête Authorization: Bearer <token>
+    Le token est attendu dans l'en-tête Authorization au format Bearer.
     
     Args:
         request: Objet Request FastAPI contenant les headers
@@ -33,14 +33,15 @@ def verify_import_token(request: Request) -> None:
     """
     auth_header = request.headers.get("authorization", "")
     
-    # Extraire le token depuis "Bearer <token>"
+    # On refuse explicitement les formats incomplets pour éviter les faux
+    # positifs d'authentification.
     if not auth_header.startswith("Bearer "):
         raise HTTPException(
             status_code=HTTP_403_FORBIDDEN,
             detail="Invalid or missing import token",
         )
     
-    token = auth_header[7:]  # Retirer "Bearer " (7 caractères)
+    token = auth_header[7:]  # On retire le préfixe "Bearer " avant comparaison.
     
     if token != ApiConfig.IMPORT_TOKEN:
         raise HTTPException(
