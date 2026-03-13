@@ -63,6 +63,45 @@ services:
       postgres:
         condition: service_healthy
 
+  api:
+    build: .
+    container_name: obrail_api
+    env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${PG_DB:-obrail}
+      PG_USER: ${PG_USER:-obrail}
+      PG_PASSWORD: ${PG_PASSWORD:-obrail123}
+    ports:
+      - "8000:8000"
+    entrypoint: []
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dashboard:
+    build: .
+    container_name: obrail_dashboard
+    env_file: .env
+    environment:
+      DASHBOARD_API_URL: http://api:8000/api/v1
+      PYTHONPATH: /app          # override /app/src du Dockerfile — dashboard/ est à la racine /app
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./dashboard:/app/dashboard
+    entrypoint: []              # neutralise ENTRYPOINT ["python", "src/pipeline.py"] du Dockerfile
+    command: python -m dashboard.app
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8050/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
 volumes:
   postgres_data:
 

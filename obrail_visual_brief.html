@@ -1,0 +1,320 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); }
+  .brief { padding: 1.5rem 0; }
+  .section-label {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-tertiary);
+    margin-bottom: 1rem;
+    padding-bottom: 6px;
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+  }
+  .section { margin-bottom: 2rem; }
+
+  /* PALETTE */
+  .palette-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatch-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 80px; }
+  .swatch { height: 44px; border-radius: 6px; }
+  .swatch-label { font-size: 11px; color: var(--color-text-secondary); }
+  .swatch-role { font-size: 11px; font-weight: 500; color: var(--color-text-primary); }
+
+  /* TYPO */
+  .typo-row { display: flex; flex-direction: column; gap: 10px; }
+  .typo-item { display: flex; align-items: baseline; gap: 16px; }
+  .typo-meta { font-size: 11px; color: var(--color-text-tertiary); min-width: 110px; }
+
+  /* MOTIFS */
+  .motif-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .motif-card {
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .motif-preview { height: 56px; display: flex; align-items: center; justify-content: center; }
+  .motif-title { font-size: 12px; font-weight: 500; color: var(--color-text-primary); }
+  .motif-desc { font-size: 11px; color: var(--color-text-secondary); line-height: 1.5; }
+
+  /* COMPONENTS */
+  .comp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .comp-card {
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+
+  /* KPI card */
+  .kpi-label { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 2px; }
+  .kpi-value { font-size: 26px; font-weight: 500; color: var(--color-text-primary); line-height: 1.2; }
+  .kpi-sub { font-size: 11px; margin-top: 4px; }
+  .kpi-bar { height: 3px; border-radius: 2px; background: var(--color-border-tertiary); margin-top: 10px; overflow: hidden; }
+  .kpi-bar-fill { height: 100%; border-radius: 2px; }
+
+  /* Badge */
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .badge-night { background: #1e2d45; color: #8ab4d8; }
+  .badge-day { background: #3a2a10; color: #d4a853; }
+  .badge-eco { background: #1a2e1a; color: #72a85c; }
+
+  /* Route line mini */
+  .route-mini { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-primary); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .track-line { flex: 1; height: 1px; border-top: 1.5px dashed; opacity: 0.3; }
+
+  /* Chart bar mini */
+  .bar-mini { display: flex; align-items: flex-end; gap: 5px; height: 48px; }
+  .bar-col { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1; }
+  .bar-rect { width: 100%; border-radius: 3px 3px 0 0; }
+  .bar-x { font-size: 9px; color: var(--color-text-tertiary); }
+
+  /* Separator rail motif */
+  .rail-sep { display: flex; align-items: center; gap: 6px; margin: 1.5rem 0; }
+  .rail-line { flex: 1; height: 2px; background: var(--color-border-tertiary); position: relative; }
+  .rail-sleeper {
+    position: absolute; top: -3px;
+    width: 6px; height: 8px; background: var(--color-border-secondary); border-radius: 1px;
+  }
+  .rail-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-border-secondary); }
+
+  /* Dark bg card */
+  .night-card {
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: #0f1a27;
+  }
+</style>
+
+<div class="brief">
+
+  <div class="section">
+    <div class="section-label">Palette principale</div>
+    <div class="palette-row">
+      <div class="swatch-group">
+        <div class="swatch" style="background:#2a4a6e;"></div>
+        <div class="swatch-role">Acier nuit</div>
+        <div class="swatch-label">#2a4a6e — trains de nuit, headers</div>
+      </div>
+      <div class="swatch-group">
+        <div class="swatch" style="background:#8fb3d4;"></div>
+        <div class="swatch-role">Bleu ardoise</div>
+        <div class="swatch-label">#8fb3d4 — accents, liens</div>
+      </div>
+      <div class="swatch-group">
+        <div class="swatch" style="background:#c9993a;"></div>
+        <div class="swatch-role">Ambre jour</div>
+        <div class="swatch-label">#c9993a — trains de jour</div>
+      </div>
+      <div class="swatch-group">
+        <div class="swatch" style="background:#5a8a4a;"></div>
+        <div class="swatch-role">Vert durable</div>
+        <div class="swatch-label">#5a8a4a — CO₂, écologie</div>
+      </div>
+      <div class="swatch-group">
+        <div class="swatch" style="background:#e8e4dc;"></div>
+        <div class="swatch-role">Pierre claire</div>
+        <div class="swatch-label">#e8e4dc — fonds, surfaces</div>
+      </div>
+      <div class="swatch-group">
+        <div class="swatch" style="background:#4a4740;"></div>
+        <div class="swatch-role">Ballast</div>
+        <div class="swatch-label">#4a4740 — texte secondaire</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rail-sep">
+    <div class="rail-dot"></div>
+    <div class="rail-line">
+      <div class="rail-sleeper" style="left:8%"></div>
+      <div class="rail-sleeper" style="left:20%"></div>
+      <div class="rail-sleeper" style="left:32%"></div>
+      <div class="rail-sleeper" style="left:44%"></div>
+      <div class="rail-sleeper" style="left:56%"></div>
+      <div class="rail-sleeper" style="left:68%"></div>
+      <div class="rail-sleeper" style="left:80%"></div>
+    </div>
+    <div class="rail-dot"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Typographie</div>
+    <div class="typo-row">
+      <div class="typo-item">
+        <span class="typo-meta">Titre section</span>
+        <span style="font-size:22px; font-weight:500; color:var(--color-text-primary);">Réseau ferroviaire EU</span>
+      </div>
+      <div class="typo-item">
+        <span class="typo-meta">Titre carte</span>
+        <span style="font-size:16px; font-weight:500; color:var(--color-text-primary);">Émissions CO₂ par pays</span>
+      </div>
+      <div class="typo-item">
+        <span class="typo-meta">Corps / label</span>
+        <span style="font-size:13px; color:var(--color-text-secondary);">Données issues de 155 flux GTFS · 41 pays</span>
+      </div>
+      <div class="typo-item">
+        <span class="typo-meta">Micro-label</span>
+        <span style="font-size:11px; font-weight:500; letter-spacing:0.07em; text-transform:uppercase; color:var(--color-text-tertiary);">Source · EEA / Mobility Database</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="rail-sep">
+    <div class="rail-dot"></div>
+    <div class="rail-line">
+      <div class="rail-sleeper" style="left:8%"></div>
+      <div class="rail-sleeper" style="left:20%"></div>
+      <div class="rail-sleeper" style="left:32%"></div>
+      <div class="rail-sleeper" style="left:44%"></div>
+      <div class="rail-sleeper" style="left:56%"></div>
+      <div class="rail-sleeper" style="left:68%"></div>
+      <div class="rail-sleeper" style="left:80%"></div>
+    </div>
+    <div class="rail-dot"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Composants UI — exemples</div>
+    <div class="comp-row">
+
+      <div class="comp-card">
+        <div class="kpi-label">Dessertes nuit actives</div>
+        <div class="kpi-value" style="color:#2a4a6e;">3 218</div>
+        <div class="kpi-sub" style="color:#5a8a4a;">↑ +12 % vs année précédente</div>
+        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:64%; background:#2a4a6e;"></div></div>
+      </div>
+
+      <div class="comp-card">
+        <div class="kpi-label">Émission moyenne train</div>
+        <div class="kpi-value" style="color:#5a8a4a;">14 gCO₂/km</div>
+        <div class="kpi-sub" style="color:#c9993a;">vs avion : 255 g · ×18</div>
+        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:6%; background:#5a8a4a;"></div></div>
+      </div>
+
+      <div class="comp-card" style="grid-column: span 2;">
+        <div style="font-size:12px; font-weight:500; color:var(--color-text-secondary); margin-bottom:10px;">Lignes récentes</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div class="route-mini">
+            <div class="dot" style="background:#2a4a6e;"></div>
+            <span>Paris Gare de Lyon</span>
+            <div class="track-line" style="border-color:#2a4a6e;"></div>
+            <span>Vienne Hbf</span>
+            <span style="margin-left:8px;"><span class="badge badge-night">Nuit</span></span>
+          </div>
+          <div class="route-mini">
+            <div class="dot" style="background:#c9993a;"></div>
+            <span>Amsterdam Centraal</span>
+            <div class="track-line" style="border-color:#c9993a;"></div>
+            <span>Berlin Hbf</span>
+            <span style="margin-left:8px;"><span class="badge badge-day">Jour</span></span>
+          </div>
+          <div class="route-mini">
+            <div class="dot" style="background:#5a8a4a;"></div>
+            <span>London St Pancras</span>
+            <div class="track-line" style="border-color:#5a8a4a;"></div>
+            <span>Bruxelles-Midi</span>
+            <span style="margin-left:8px;"><span class="badge badge-eco">Eurostar</span></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="rail-sep">
+    <div class="rail-dot"></div>
+    <div class="rail-line">
+      <div class="rail-sleeper" style="left:8%"></div>
+      <div class="rail-sleeper" style="left:20%"></div>
+      <div class="rail-sleeper" style="left:32%"></div>
+      <div class="rail-sleeper" style="left:44%"></div>
+      <div class="rail-sleeper" style="left:56%"></div>
+      <div class="rail-sleeper" style="left:68%"></div>
+      <div class="rail-sleeper" style="left:80%"></div>
+    </div>
+    <div class="rail-dot"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Motifs graphiques</div>
+    <div class="motif-row">
+      <div class="motif-card">
+        <div class="motif-preview">
+          <svg width="100%" height="48" viewBox="0 0 120 48">
+            <line x1="0" y1="16" x2="120" y2="16" stroke="#2a4a6e" stroke-width="2"/>
+            <line x1="0" y1="32" x2="120" y2="32" stroke="#2a4a6e" stroke-width="2"/>
+            <rect x="8" y="10" width="5" height="28" rx="1" fill="#4a4740" opacity="0.4"/>
+            <rect x="28" y="10" width="5" height="28" rx="1" fill="#4a4740" opacity="0.4"/>
+            <rect x="48" y="10" width="5" height="28" rx="1" fill="#4a4740" opacity="0.4"/>
+            <rect x="68" y="10" width="5" height="28" rx="1" fill="#4a4740" opacity="0.4"/>
+            <rect x="88" y="10" width="5" height="28" rx="1" fill="#4a4740" opacity="0.4"/>
+            <rect x="108" y="10" width="5" height="28" rx="1" fill="#4a4740" opacity="0.4"/>
+          </svg>
+        </div>
+        <div class="motif-title">Séparateur voie</div>
+        <div class="motif-desc">Deux rails + traverses en séparateur de section. Motif subtil, identitaire.</div>
+      </div>
+      <div class="motif-card">
+        <div class="motif-preview">
+          <svg width="100%" height="48" viewBox="0 0 120 48">
+            <circle cx="20" cy="24" r="7" fill="none" stroke="#2a4a6e" stroke-width="1.5"/>
+            <circle cx="20" cy="24" r="3" fill="#2a4a6e"/>
+            <line x1="27" y1="24" x2="48" y2="24" stroke="#8fb3d4" stroke-width="1.5" stroke-dasharray="3 3"/>
+            <circle cx="60" cy="24" r="7" fill="none" stroke="#c9993a" stroke-width="1.5"/>
+            <circle cx="60" cy="24" r="3" fill="#c9993a"/>
+            <line x1="67" y1="24" x2="88" y2="24" stroke="#8fb3d4" stroke-width="1.5" stroke-dasharray="3 3"/>
+            <circle cx="100" cy="24" r="7" fill="none" stroke="#5a8a4a" stroke-width="1.5"/>
+            <circle cx="100" cy="24" r="3" fill="#5a8a4a"/>
+          </svg>
+        </div>
+        <div class="motif-title">Stations connectées</div>
+        <div class="motif-desc">Cercle plein = gare. Tiret = segment de ligne. Couleur = type de train.</div>
+      </div>
+      <div class="motif-card">
+        <div class="motif-preview">
+          <div class="bar-mini" style="padding: 0 8px;">
+            <div class="bar-col"><div class="bar-rect" style="height:38px; background:#2a4a6e;"></div><div class="bar-x">FR</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:28px; background:#2a4a6e; opacity:0.7;"></div><div class="bar-x">DE</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:22px; background:#c9993a;"></div><div class="bar-x">AT</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:32px; background:#2a4a6e; opacity:0.8;"></div><div class="bar-x">CH</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:18px; background:#c9993a; opacity:0.7;"></div><div class="bar-x">IT</div></div>
+          </div>
+        </div>
+        <div class="motif-title">Barres bicolores</div>
+        <div class="motif-desc">Bleu acier = nuit · Ambre = jour. Même encodage sur toutes les vues.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" style="margin-bottom:0;">
+    <div class="section-label">Mode sombre — aperçu carte nuit</div>
+    <div class="night-card">
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.07em; color:#4a7a9e; margin-bottom:10px;">Trains de nuit · Europe</div>
+      <div style="display:flex; gap:16px; align-items:flex-end;">
+        <div>
+          <div style="font-size:32px; font-weight:500; color:#8fb3d4; line-height:1;">52</div>
+          <div style="font-size:11px; color:#4a7a9e; margin-top:2px;">lignes actives</div>
+        </div>
+        <div style="flex:1;">
+          <div class="bar-mini" style="height:36px;">
+            <div class="bar-col"><div class="bar-rect" style="height:26px; background:#2a4a6e;"></div><div class="bar-x" style="color:#4a7a9e;">AT</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:22px; background:#2a4a6e; opacity:0.7;"></div><div class="bar-x" style="color:#4a7a9e;">DE</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:18px; background:#2a4a6e; opacity:0.5;"></div><div class="bar-x" style="color:#4a7a9e;">FR</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:30px; background:#2a4a6e; opacity:0.9;"></div><div class="bar-x" style="color:#4a7a9e;">CH</div></div>
+            <div class="bar-col"><div class="bar-rect" style="height:14px; background:#2a4a6e; opacity:0.5;"></div><div class="bar-x" style="color:#4a7a9e;">IT</div></div>
+          </div>
+        </div>
+      </div>
+      <div style="height:1px; background:#1e3550; margin:10px 0;"></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <span style="background:#112233; color:#8fb3d4; font-size:11px; padding:3px 10px; border-radius:20px; border:0.5px solid #1e3a5a;">ÖBB Nightjet</span>
+        <span style="background:#112233; color:#8fb3d4; font-size:11px; padding:3px 10px; border-radius:20px; border:0.5px solid #1e3a5a;">SNCF iDTGV</span>
+        <span style="background:#112233; color:#8fb3d4; font-size:11px; padding:3px 10px; border-radius:20px; border:0.5px solid #1e3a5a;">DB Nightjet</span>
+      </div>
+    </div>
+  </div>
+
+</div>
