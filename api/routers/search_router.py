@@ -13,8 +13,6 @@ from ..utils.query_helpers import execute_query, execute_paginated_with_count, e
 router = APIRouter()
 
 
-# ── 4.1 GET /routes/search ───────────────────────────────────────────────────
-
 @router.get("/routes/search")
 def search_routes(
     origin: str = Query(..., min_length=1, max_length=100),
@@ -27,9 +25,11 @@ def search_routes(
     conn=Depends(get_db),
 ):
     """Recherche de trajets ferroviaires entre deux points, dans les deux sens."""
-    # raw SQL: spec section 4.1
+    # La recherche s'appuie sur du SQL explicite pour gérer proprement le mode
+    # bidirectionnel et les filtres optionnels.
 
-    # Conditions communes
+    # Ces conditions s'appliquent aux deux sens pour garantir des résultats
+    # comparables entre aller et retour.
     conditions = []
     base_params = []
 
@@ -45,7 +45,7 @@ def search_routes(
 
     extra_where = "\n          ".join(conditions)
 
-    # Sens aller
+    # Requête de base dans le sens origin -> destination.
     outbound_query = f"""
         SELECT *, 'outbound' AS direction
         FROM gold_routes
@@ -60,13 +60,14 @@ def search_routes(
           )
           {extra_where}
     """
-    # Échappement LIKE : % et _ ne sont pas des wildcards dans les noms de villes
+    # On échappe les caractères LIKE spéciaux pour que les noms de villes
+    # soient interprétés littéralement.
     origin_esc = escape_like(origin)
     destination_esc = escape_like(destination)
     outbound_params = [origin_esc, origin_esc, destination_esc, destination_esc] + base_params
 
     if bidirectional:
-        # Sens retour
+        # Même logique dans le sens inverse quand bidirectional=true.
         return_query = f"""
             SELECT *, 'return' AS direction
             FROM gold_routes
@@ -122,8 +123,6 @@ def search_routes(
     )
 
 
-# ── 4.2 GET /routes/{trip_id} ────────────────────────────────────────────────
-
 @router.get("/routes/{trip_id}")
 def get_route_detail(
     trip_id: str,
@@ -133,14 +132,15 @@ def get_route_detail(
 ):
     """Liste des segments d'un trajet spécifique (même trip_id peut correspondre à
     plusieurs segments : Paris-Nîmes, Paris-Montpellier, Nîmes-Montpellier)."""
-    # raw SQL: spec section 4.2
+    # On garde un SQL simple et direct ici pour retourner tous les segments
+    # attachés au même trip_id.
     conditions = ["trip_id = %s"]
     params = [trip_id]
 
     if source:
         conditions.append("source = %s")
         params.append(source)
-    # partition pruning: departure_country
+    # Le filtre pays est normalisé pour profiter du partition pruning.
     if departure_country:
         conditions.append("departure_country = %s")
         params.append(departure_country.upper())

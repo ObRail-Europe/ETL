@@ -40,7 +40,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
             Si aucun fichier GTFS est trouvé
         """
         cfg = self.config
-        self.logger.info("Début du traitement Mobility Database (GTFS)...")
+        self.logger.info("MDB - étape 1/6: chargement et normalisation des tables GTFS.")
 
         # chargement et normalisation des 7 tables GTFS
         df_routes = self._load_and_normalize_gtfs("routes", cfg.GTFS_COLS_ROUTES)
@@ -76,7 +76,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         # if df_stops is not None:
         #     df_stops = df_stops.persist()
 
-        self.logger.info("Début des jointures composites MDB...")
+        self.logger.info("MDB - étape 2/6: jointures composites et filtres structurants.")
 
         # jointures composites (broadcast des petites tables)
         df_mdb = (
@@ -102,7 +102,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         #     df_stops.unpersist()
 
         # casts post-jointure
-        self.logger.debug("Casts post-jointure (stop_lat, stop_lon, stop_sequence, route_type)...")
+        self.logger.debug("MDB: casts post-jointure (coords, séquence, route_type).")
         df_mdb = (
             df_mdb
             .withColumn("stop_lat", F.col("stop_lat").cast("double"))
@@ -112,15 +112,15 @@ class MobilityDatabaseTransformer(BaseTransformer):
         )
 
         # nettoyage global des cellules vides → NULL
-        self.logger.debug("Nettoyage des cellules vides → NULL...")
+        self.logger.debug("MDB: nettoyage global des cellules vides vers NULL.")
         df_mdb = replace_blank_with_nulls(df_mdb)
 
         # filtre stop_sequence nul
-        self.logger.debug("Filtre des stop_sequence nuls...")
+        self.logger.debug("MDB: suppression des lignes sans stop_sequence exploitable.")
         df_mdb = df_mdb.filter(F.col("stop_sequence").isNotNull())
 
         # filtre route_type & dedoublonnage
-        self.logger.debug("Filtre route_type ferroviaire et dedoublonnage sémantique...")
+        self.logger.debug("MDB: filtre route_type ferroviaire puis dédoublonnage sémantique.")
         df_mdb = (
             df_mdb
             .filter(F.col("route_type").isin(cfg.VALID_ROUTE_TYPES))
@@ -130,18 +130,19 @@ class MobilityDatabaseTransformer(BaseTransformer):
         # checkpoint post-jointures (tronque le lineage + matérialise)
         # eager=False : chaîne de transformations linéaire, pas de branche immédiate
         df_mdb = df_mdb.checkpoint(eager=False)
-        self.logger.debug("Checkpoint MDB post-jointures matérialisé")
+        self.logger.debug("MDB: checkpoint post-jointures posé pour réduire le lineage.")
 
         # # persistence avant enrichissements lourds
         # self.logger.debug("Persistence du DataFrame filtré avant enrichissements...")
         # df_mdb = df_mdb.persist()
 
         # enrichissement route_type 2 (générique)
-        self.logger.debug("Enrichissement route_type 2 (générique → spécifique)...")
+        self.logger.info("MDB - étape 3/6: enrichissements route/agence et nettoyage géographique.")
+        self.logger.debug("MDB: enrichissement route_type 2 (générique → spécifique).")
         df_mdb = self._enrich_route_type(df_mdb)
 
         # filtre coordonnées invalides (Null Island)
-        self.logger.debug("Filtre des coordonnées invalides (Null Island)...")
+        self.logger.debug("MDB: exclusion des trips avec coordonnées invalides (Null Island).")
         bad_trips = (
             df_mdb
             .filter(invalid_coord_expr("stop_lat", "stop_lon"))
@@ -151,7 +152,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         df_mdb = df_mdb.join(F.broadcast(bad_trips), ["source", "trip_id"], "left_anti")
 
         # filtre trips avec un seul arrêt
-        self.logger.debug("Filtre des trips à un seul arrêt...")
+        self.logger.debug("MDB: retrait des trips à arrêt unique (non exploitables en segment).")
         # Repartition AVANT window function pour éviter shuffle vers single partition
         df_mdb = df_mdb.repartition("source", "trip_id")
         w_trip = Window.partitionBy("source", "trip_id")
@@ -163,7 +164,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         )
 
         # normalisation des champs texte et extraction du pays
-        self.logger.debug("Normalisation Title Case et extraction du code pays...")
+        self.logger.debug("MDB: normalisation texte + extraction du code pays depuis source.")
         df_mdb = (
             df_mdb
             .withColumn("arrival_time", F.substring_index(F.col("arrival_time"), " ", -1))
@@ -174,30 +175,31 @@ class MobilityDatabaseTransformer(BaseTransformer):
         )
 
         # correction des fuseaux horaires via TZ_MAPPING
-        self.logger.debug("Correction des fuseaux horaires CET/UTC → IANA...")
+        self.logger.debug("MDB: correction des fuseaux horaires vers IANA via mapping.")
         df_mdb = apply_tz_mapping(df_mdb, self.config.TZ_MAPPING, country_col="_country")
 
         # Checkpoint avant les opérations de fenêtrage coûteuses
         # Cela tronque la dépendance et libère l'optimiseur Catalyst
-        self.logger.debug("Checkpoint pré-enrichissement pour tronquer le lineage...")
+        self.logger.debug("MDB: checkpoint pré-enrichissement posé avant fenêtrages coûteux.")
         df_mdb = df_mdb.checkpoint(eager=False)
 
         # propagation d'agence par route
-        self.logger.debug("Propagation des agences par route_id...")
+        self.logger.debug("MDB: propagation des métadonnées agence au niveau route_id.")
         df_mdb = self._propagate_agency(df_mdb)
 
         # mapping manuel des agences
-        self.logger.debug("Application du mapping manuel des agences...")
+        self.logger.debug("MDB: application des surcharges manuelles d'agences pour les feeds connus.")
         df_mdb = self._apply_manual_agency_mapping(df_mdb)
 
         # calcul Haversine inter-arrêts
-        self.logger.debug("Calcul des distances Haversine inter-arrêts...")
+        self.logger.info("MDB - étape 4/6: calcul des distances inter-arrêts et purge des segments invalides.")
+        self.logger.debug("MDB: calcul Haversine inter-arrêts avec facteur de détour rail.")
         df_mdb = self._compute_segment_distances(df_mdb, partition_cols=["source", "trip_id"])
 
         # checkpoint post-Haversine (tronque le lineage + matérialise)
         # eager=False : pas de réutilisation multi-branches à ce stade
         df_mdb = df_mdb.checkpoint(eager=False)
-        self.logger.debug("Checkpoint MDB post-Haversine matérialisé")
+        self.logger.debug("MDB: checkpoint post-Haversine posé pour stabiliser la suite.")
 
         # # checkpoint post-Haversine (tronque le lineage + matérialise)
         # self.logger.debug("Checkpoint post-Haversine + libération mémoire précédente...")
@@ -206,7 +208,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         # df_mdb_old.unpersist()  # libère le DataFrame persisté précédemment
 
         #filtre des segments à distance nulle ou invalide
-        self.logger.debug("Filtre des segments à distance nulle ou invalide...")
+        self.logger.debug("MDB: exclusion des trips comportant des segments nuls/incohérents.")
         bad_zero_segments = (
             df_mdb
             .filter(
@@ -222,15 +224,15 @@ class MobilityDatabaseTransformer(BaseTransformer):
 
         # reconstruction du calendrier via calendar_dates
         if df_calendar_dates is not None:
-            self.logger.debug("Reconstruction des calendriers via calendar_dates...")
+            self.logger.info("MDB - étape 5/6: reconstruction des calendriers depuis calendar_dates.")
+            self.logger.debug("MDB: reconstruction des jours actifs et bornes de service.")
             df_mdb = self._reconstruct_calendar(df_mdb, df_calendar_dates)
 
-        # filtre end_date avec stratégie de sauvetage par pays
-        self.logger.debug("Filtre end_date avec stratégie de sauvetage par pays...")
+        self.logger.info("MDB - étape 6/6: filtrage final des services expirés et projection des colonnes métier.")
+        self.logger.debug("MDB: filtre end_date avec stratégie de sauvetage par pays peu volumineux.")
         df_mdb = self._filter_end_date(df_mdb)
 
-        # masque jours de semaine + colonnes finales
-        self.logger.debug("Construction du masque days_of_week et colonnes finales...")
+        self.logger.debug("MDB: construction de days_of_week et projection finale du schéma de sortie.")
         day_cols = cfg.DAY_COLS
         df_mdb = (
             df_mdb
@@ -244,7 +246,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
             .withColumn("is_night_train", F.col("route_type") == 105)
         )
 
-        self.logger.info("Phase Mobility Database terminée.")
+        self.logger.info("MDB terminé: dataset GTFS ferroviaire prêt pour la fusion globale.")
         return {"df_mdb": df_mdb}
 
     # -----------------------------------------------------------------
@@ -271,13 +273,13 @@ class MobilityDatabaseTransformer(BaseTransformer):
         DataFrame ou None
             DataFrame unifié, ou None si aucun fichier trouvé
         """
-        self.logger.debug(f"Lecture et alignement natif de '{table_name}'...")
+        self.logger.debug(f"MDB: lecture et normalisation de la table GTFS '{table_name}'.")
         file_paths = glob.glob(
             str(self.config.MDB_RAW_PATH / "*" / "*" / table_name)
         )
 
         if not file_paths:
-            self.logger.warning(f"Aucun fichier trouvé pour {table_name}")
+            self.logger.warning(f"MDB: aucun fichier trouvé pour '{table_name}' (table ignorée).")
             return None
 
         unified_dfs: list[DataFrame] = []
@@ -312,7 +314,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
             unified_dfs.append(df_temp.select(*exprs))
 
         df_merged = tree_union(unified_dfs)
-        self.logger.debug(f"Table '{table_name}' chargée et normalisée.")
+        self.logger.debug(f"MDB: table '{table_name}' chargée et alignée sur le schéma cible.")
         return df_merged
 
     def _enrich_route_type(self, df: DataFrame) -> DataFrame:
@@ -442,7 +444,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         """
         # CRITIQUE: Repartition AVANT window function pour éviter shuffle vers single partition
         # Sans cela, Spark remet toutes les données sur un seul nœud = OutOfMemoryError
-        self.logger.debug(f"Repartition sur {partition_cols} pour window function Haversine...")
+        self.logger.debug(f"MDB: repartition sur {partition_cols} avant window Haversine pour éviter les hotspots.")
         df_repartitioned = df.repartition(*partition_cols).cache()
         
         w_seq = Window.partitionBy(*partition_cols).orderBy("stop_sequence")
@@ -460,7 +462,7 @@ class MobilityDatabaseTransformer(BaseTransformer):
         )
         
         # Matérialiser et libérer le cache
-        self.logger.debug("Matérialisation des distances Haversine et libération du cache...")
+        self.logger.debug("MDB: matérialisation des distances Haversine puis libération du cache intermédiaire.")
         # eager=True : force la matérialisation avant unpersist du cache intermédiaire
         result = result.checkpoint(eager=True)
         df_repartitioned.unpersist()

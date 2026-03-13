@@ -72,14 +72,17 @@ class DataLoader:
         dict avec statut global, durée et métriques par étape
         """
         self.logger.info(f"Date d'exécution: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info("Démarrage chargement: initialisation PG, agrégation gold, puis publication incrémentale.")
         self.monitor.start("chargement_total")
 
         results: dict[str, Any] = {}
         cfg = self.chargement_config
 
         try:
-            # ── Étape 1 : Initialisation du schéma PostgreSQL ──────────────
+            # On initialise le schéma avant tout chargement pour garantir
+            # que les tables/partitions attendues existent déjà côté PostgreSQL.
             self.logger.log_section("INIT SCHÉMA POSTGRESQL", level="INFO")
+            self.logger.info("Chargement - étape 1/4: préparation du schéma PostgreSQL (DDL + partitions + vues).")
             pg_loader = PostgresLoader(
                 logger=self.logger,
                 config=cfg,
@@ -90,8 +93,10 @@ class DataLoader:
             if schema_result["status"] == "FAILED":
                 raise RuntimeError(f"Échec init_schema : {schema_result.get('error')}")
 
-            # ── Étape 2 : Agrégation gold ───────────────────────────────────
+            # Les DataFrames gold sont calculés avant la phase JDBC pour garder
+            # un enchaînement clair entre préparation et persistance.
             self.logger.log_section("AGRÉGATION GOLD", level="INFO")
+            self.logger.info("Chargement - étape 2/4: construction des DataFrames gold depuis les sorties silver.")
             aggregator = GoldAggregator(
                 spark=self.spark,
                 logger=self.logger,
@@ -105,10 +110,13 @@ class DataLoader:
 
             dfs = agg_result["dataframes"]
 
-            # ── Étape 3 : Chargement dans PostgreSQL ───────────────────────
+            # Le chargement est fait table par table pour isoler les erreurs
+            # et garder une traçabilité simple dans les logs d'exécution.
             self.logger.log_section("CHARGEMENT POSTGRESQL", level="INFO")
+            self.logger.info("Chargement - étape 3/4: upsert des tables gold dans PostgreSQL via staging.")
 
-            # Ordre de chargement (pas de FK entre les tables gold)
+            # L'ordre est explicite pour pouvoir facilement l'ajuster si des
+            # dépendances apparaissent plus tard (FK, vues matérialisées, etc.).
             tables = [
                 ("gold_routes",                    dfs["gold_agg"]),
                 ("gold_compare_best",              dfs["gold_compare_best"]),
@@ -116,17 +124,24 @@ class DataLoader:
 
             load_results: dict[str, Any] = {}
             for table_name, df in tables:
-                # Remplace les NULL dans departure_country par 'XX' (contrainte NOT NULL en PG)
+                self.logger.info(f"Chargement table: démarrage upsert incrémental pour {table_name}.")
+                # On force une valeur par défaut pour respecter la contrainte
+                # NOT NULL sur departure_country côté PostgreSQL.
                 df = df.fillna({"departure_country": "XX"})
-                # Upsert incrémental : seules les partitions (pays) présentes dans ce run
-                # sont remplacées – les autres données existantes sont conservées.
+                # L'upsert ne remplace que les partitions concernées par le run,
+                # ce qui évite de réécrire inutilement tout l'historique.
                 load_result = pg_loader.upsert_via_staging(df, table_name)
                 load_results[table_name] = load_result
+                self.logger.info(
+                    f"Chargement table: {table_name} terminé avec statut {load_result.get('status', 'UNKNOWN')}."
+                )
 
             results["loading"] = load_results
 
-            # ── Étape 4 : Index & ANALYZE post-chargement ──────────────────
+            # Les index et ANALYZE sont lancés après insertion massive, car
+            # c'est plus stable et généralement plus rapide qu'en flux continu.
             self.logger.log_section("POST-CHARGEMENT (INDEX & ANALYZE)", level="INFO")
+            self.logger.info("Chargement - étape 4/4: optimisation post-load (index + ANALYZE).")
             post_result = pg_loader.post_load()
             results["post_load"] = post_result
 
@@ -158,11 +173,12 @@ class DataLoader:
         """Affiche le résumé final dans les logs."""
         self.logger.log_section("RÉSUMÉ DU CHARGEMENT", level="INFO")
 
-        # Compte les tables chargées avec succès
-        load_results = results.get("loading", {})
+        # Ce compteur donne une vision rapide du niveau de complétion réel,
+        # même si le détail complet reste disponible dans results["loading"].
+        load_results: dict[str, dict[str, Any]] = results.get("loading", {})
         tables_ok = sum(
             1 for r in load_results.values()
-            if isinstance(r, dict) and r.get("status") == "SUCCESS"
+            if r.get("status") == "SUCCESS"
         )
 
         metrics: dict[str, str | float | int] = {

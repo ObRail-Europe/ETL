@@ -52,22 +52,22 @@ class MergeTransformer(BaseTransformer):
         df_airports: DataFrame = kwargs["df_airports"]
         cfg = self.config
 
-        self.logger.info("Fusion finale et bucketing géographique...")
+        self.logger.info("Merge - étape 1/6: alignement MDB/BOTN et matching multi-niveaux.")
 
         # alignement des colonnes communes
         common_cols = list(set(df_mdb.columns).intersection(set(df_botn.columns)))
-        self.logger.debug(f"Colonnes communes MDB/BOTN: {len(common_cols)}")
+        self.logger.debug(f"Merge: {len(common_cols)} colonnes communes détectées pour l'union MDB/BOTN.")
 
         # checkpoint : tronque le lineage MDB/BOTN (plan Catalyst trop large sinon)
         # eager=False : pipeline linéaire juste après, évite une action supplémentaire immédiate
         df_mdb_aligned = df_mdb.select(*common_cols).checkpoint(eager=False)
         df_botn_aligned = df_botn.select(*common_cols).checkpoint(eager=False)
-        self.logger.debug("Checkpoint MDB/BOTN matérialisé")
+        self.logger.debug("Merge: checkpoints MDB/BOTN posés avant matching pour réduire le lineage.")
 
         # matching L1 & L2
         df_merged = self._match_botn_mdb(df_mdb_aligned, df_botn_aligned)
 
-        # geo-bucketing GeoNames
+        self.logger.info("Merge - étape 2/6: enrichissement géographique via GeoNames (geo-bucketing).")
         df_final = self._geo_bucket_enrichment(df_merged)
 
         # correction timezone post-geo
@@ -76,25 +76,25 @@ class MergeTransformer(BaseTransformer):
         # checkpoint df_final post-geo (tronque lineage, lu 3 fois)
         # eager=True : dataset réutilisé dans plusieurs branches
         df_final = df_final.checkpoint(eager=True)
-        self.logger.debug("Checkpoint df_final post-geo matérialisé")
+        self.logger.debug("Merge: checkpoint post-geo posé (df_final réutilisé dans plusieurs branches).")
 
-        # construction table localite (trips + aéroports) 
+        self.logger.info("Merge - étape 3/6: construction de la dimension localite (trips + aéroports).")
         df_localite = self._build_localite_table(df_final, df_airports)
 
         # checkpoint localite (tronque le lineage)
         # eager=True : réutilisé pour emission + remplacement de FK trip
         df_localite = df_localite.checkpoint(eager=True)
-        self.logger.debug("Checkpoint localite matérialisé")
+        self.logger.debug("Merge: checkpoint localite posé pour sécuriser les jointures aval.")
 
-        # construction table emission
+        self.logger.info("Merge - étape 4/6: construction de la dimension emission (rail + aérien).")
         df_emission = self._build_emission_table(df_localite, df_ember, df_ademe)
 
         # checkpoint emission (tronque le lineage)
         # eager=False : consommation linéaire immédiate ensuite
         df_emission = df_emission.checkpoint(eager=False)
-        self.logger.debug("Checkpoint emission matérialisé")
+        self.logger.debug("Merge: checkpoint emission posé avant remplacement des FK dans trip.")
 
-        # remplacement FK dans trip
+        self.logger.info("Merge - étape 5/6: remplacement des attributs texte par clés étrangères (city_id/emission_ref).")
         df_final = self._replace_fk_in_trips(df_final, df_localite, df_emission)
 
         # nettoyage final
@@ -102,7 +102,7 @@ class MergeTransformer(BaseTransformer):
         df_emission = replace_blank_with_nulls(df_emission)
         df_final = replace_blank_with_nulls(df_final)
 
-        # sauvegarde Parquet
+        self.logger.info("Merge - étape 6/6: sauvegarde des tables train_trip/localite/emission en Parquet.")
         self._save_parquet(df_final, df_localite, df_emission)
 
         return {
@@ -142,7 +142,7 @@ class MergeTransformer(BaseTransformer):
         DataFrame
             DataFrame fusionné (MDB non matchés + ALL BOTN)
         """
-        self.logger.debug("Matching L1: trip_short_name exact...")
+        self.logger.debug("Merge: matching L1 BOTN↔MDB sur trip_short_name exact.")
 
         # identifier les trips MDB dont le trip_short_name existe dans BOTN
         botn_tsn = (
@@ -158,7 +158,7 @@ class MergeTransformer(BaseTransformer):
             .distinct()
         )
 
-        self.logger.debug("Matching L2: num + agency token...")
+        self.logger.debug("Merge: matching L2 BOTN↔MDB sur numéro de train + token agence.")
 
         # numéro de train + premier token agency_name
         def add_num_agency_cols(df: DataFrame) -> DataFrame:
@@ -197,7 +197,7 @@ class MergeTransformer(BaseTransformer):
             F.broadcast(all_matched_mdb), ["source", "trip_id"], "left_anti"
         )
 
-        self.logger.debug("Fusion MDB non matchés + ALL BOTN (valeurs BOTN conservées)...")
+        self.logger.debug("Merge: fusion finale (MDB non matchés + BOTN complet en priorité BOTN).")
         return df_mdb_unmatched.unionByName(df_botn, allowMissingColumns=True)
 
     def _geo_bucket_enrichment(self, df: DataFrame) -> DataFrame:
@@ -219,7 +219,7 @@ class MergeTransformer(BaseTransformer):
         """
         cfg = self.config
 
-        self.logger.debug("Chargement GeoNames pour geo-bucketing...")
+        self.logger.debug("Merge: chargement GeoNames et préparation des buckets géographiques.")
         df_geonames = (
             self.spark.read.parquet(str(cfg.GEONAMES_RAW_PATH / "cities1000.parquet"))
             .withColumn("lat_bucket", F.floor(F.col("latitude") / cfg.GEO_BUCKET_SIZE))
@@ -233,7 +233,7 @@ class MergeTransformer(BaseTransformer):
             .select("stop_id", "stop_lat", "stop_lon")
             .distinct()
         )
-        self.logger.debug("Génération des 9 buckets adjacents par arrêt...")
+        self.logger.debug("Merge: génération des 9 buckets adjacents par arrêt sans ville.")
 
         # 9 buckets adjacents (incluant les diagonales)
         offsets = F.array(*[
@@ -255,7 +255,7 @@ class MergeTransformer(BaseTransformer):
         )
 
         # jointure par bucket (broadcast geonames ~130k rows)
-        self.logger.debug("Jointure geo-bucketing gares × villes...")
+        self.logger.debug("Merge: jointure bucketisée gares × villes puis filtre de distance max.")
         df_geo_matched = df_stops_buckets.join(
             F.broadcast(df_geonames),
             (df_stops_buckets.search_lat_b == df_geonames.lat_bucket)
@@ -290,7 +290,7 @@ class MergeTransformer(BaseTransformer):
             )
         )
 
-        self.logger.debug("Application des villes mappées aux arrêts...")
+        self.logger.debug("Merge: application des meilleures villes candidates sur les arrêts incomplets.")
         return (
             df
             .join(df_closest_city, "stop_id", "left")
@@ -320,7 +320,7 @@ class MergeTransformer(BaseTransformer):
         DataFrame
             Table localite avec clé primaire city_id
         """
-        self.logger.debug("Construction de la table localite (trips + aéroports)...")
+        self.logger.debug("Merge: construction localite depuis union des villes rail et aérien.")
 
         # villes des trips
         df_trip_cities = (
@@ -367,7 +367,7 @@ class MergeTransformer(BaseTransformer):
             "country_name", a2_name_map[F.col("country_code")]
         )
 
-        self.logger.debug("Table localite construite.")
+        self.logger.debug("Merge: table localite construite avec clé technique city_id.")
         return df_localite
 
     def _build_emission_table(
@@ -400,7 +400,7 @@ class MergeTransformer(BaseTransformer):
         """
         cfg = self.config
 
-        self.logger.debug("Construction de la table emission...")
+        self.logger.debug("Merge: construction des facteurs rail par (country_code, route_type).")
 
         # produit cartésien pays × route_type
         route_types_schema = StructType([
@@ -512,10 +512,10 @@ class MergeTransformer(BaseTransformer):
         )
 
         #union avec les émissions aériennes ADEME
-        self.logger.debug("Union des émissions ferroviaires et aériennes ADEME...")
+        self.logger.debug("Merge: union des facteurs ferroviaires calculés avec les facteurs ADEME aérien.")
         df_emission = df_emission.unionByName(df_ademe, allowMissingColumns=True)
 
-        self.logger.debug("Table emission construite.")
+        self.logger.debug("Merge: table emission unifiée prête pour la jointure FK sur trip.")
         return df_emission
 
     def _replace_fk_in_trips(
@@ -541,7 +541,7 @@ class MergeTransformer(BaseTransformer):
         DataFrame
             DataFrame trip avec FK city_id et emission_ref
         """
-        self.logger.debug("Remplacement des FK dans trip...")
+        self.logger.debug("Merge: remplacement city/country par city_id et emission_ref dans trip.")
 
         return (
             df
@@ -584,12 +584,12 @@ class MergeTransformer(BaseTransformer):
         """
         cfg = self.config
 
-        self.logger.info("Lancement de la sauvegarde Parquet...")
+        self.logger.info("Merge sauvegarde: écriture séquentielle localite, emission, puis train_trip.")
 
         df_localite.coalesce(cfg.DIM_COALESCE_PARTITIONS).write.mode("overwrite").parquet(
             str(cfg.LOCALITE_OUTPUT_PATH)
         )
-        self.logger.debug(f"Table localite sauvegardée: {cfg.LOCALITE_OUTPUT_PATH}")
+        self.logger.debug(f"Merge sauvegarde: localite écrite dans {cfg.LOCALITE_OUTPUT_PATH}")
 
         #sauvegarder uniquement les colonnes du schéma unifié
         df_emission.select(
@@ -597,11 +597,11 @@ class MergeTransformer(BaseTransformer):
         ).coalesce(cfg.DIM_COALESCE_PARTITIONS).write.mode("overwrite").parquet(
             str(cfg.EMISSION_OUTPUT_PATH)
         )
-        self.logger.debug(f"Table emission sauvegardée: {cfg.EMISSION_OUTPUT_PATH}")
+        self.logger.debug(f"Merge sauvegarde: emission écrite dans {cfg.EMISSION_OUTPUT_PATH}")
 
         df_trip.coalesce(cfg.TRIP_COALESCE_PARTITIONS).write.mode("overwrite").parquet(
             str(cfg.TRAIN_TRIP_OUTPUT_PATH)
         )
-        self.logger.debug(f"Table trip sauvegardée: {cfg.TRAIN_TRIP_OUTPUT_PATH}")
+        self.logger.debug(f"Merge sauvegarde: train_trip écrit dans {cfg.TRAIN_TRIP_OUTPUT_PATH}")
 
-        self.logger.info("Sauvegarde terminée !")
+        self.logger.info("Merge terminé: les trois tables Parquet de sortie ont été sauvegardées.")

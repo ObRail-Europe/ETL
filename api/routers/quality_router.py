@@ -13,12 +13,11 @@ from ..utils.query_helpers import execute_query, execute_single, execute_paginat
 router = APIRouter()
 
 
-# ── 7.1 GET /quality/completeness ─────────────────────────────────────────────
-
 @router.get("/quality/completeness")
 def quality_completeness(conn=Depends(get_db)):
     """Taux de complétude de chaque colonne de gold_routes."""
-    # raw SQL: spec section 7.1
+    # Les taux sont calculés en SQL pour rester alignés sur l'état réel de la
+    # table au moment de la requête.
     query = """
         SELECT
             COUNT(*) AS total_rows,
@@ -55,12 +54,11 @@ def quality_completeness(conn=Depends(get_db)):
     return {"status": "ok", "data": row}
 
 
-# ── 7.2 GET /quality/completeness/by-country ──────────────────────────────────
-
 @router.get("/quality/completeness/by-country")
 def quality_completeness_by_country(conn=Depends(get_db)):
     """Complétude ventilée par pays de départ."""
-    # raw SQL: spec section 7.2
+    # La ventilation par pays sert à repérer rapidement des anomalies de
+    # qualité localisées.
     query = """
         SELECT
             departure_country,
@@ -82,12 +80,10 @@ def quality_completeness_by_country(conn=Depends(get_db)):
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 7.3 GET /quality/coverage/countries ───────────────────────────────────────
-
 @router.get("/quality/coverage/countries")
 def quality_coverage_countries(conn=Depends(get_db)):
     """Représentation des pays dans les données."""
-    # raw SQL: spec section 7.3
+    # Cette vue synthétise la couverture multi-mode par pays de départ.
     query = """
         WITH country_stats AS (
             SELECT
@@ -113,8 +109,6 @@ def quality_coverage_countries(conn=Depends(get_db)):
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 7.4 GET /quality/coverage/cities ──────────────────────────────────────────
-
 @router.get("/quality/coverage/cities")
 def quality_coverage_cities(
     departure_country: str | None = Query(None, min_length=2, max_length=2),
@@ -123,9 +117,8 @@ def quality_coverage_cities(
     conn=Depends(get_db),
 ):
     """Villes les plus présentes dans la base."""
-    # raw SQL: spec section 7.4
-    # Les noms de colonnes sont des littéraux statiques — jamais dérivés de
-    # l'input utilisateur — ce qui prévient toute injection d'identifiant SQL.
+    # Les noms de colonnes injectés dans le SQL sont des littéraux codés en
+    # dur, jamais dérivés de l'input utilisateur.
     params: list = []
     country_filter = ""
     if departure_country:
@@ -174,12 +167,11 @@ def quality_coverage_cities(
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 7.5 GET /quality/schedules ────────────────────────────────────────────────
-
 @router.get("/quality/schedules")
 def quality_schedules(conn=Depends(get_db)):
     """Analyse de la couverture des jours de service."""
-    # raw SQL: spec section 7.5
+    # L'objectif ici est d'identifier les patterns de service manquants ou
+    # atypiques, pays par pays.
     query = """
         SELECT
             departure_country,
@@ -200,12 +192,11 @@ def quality_schedules(conn=Depends(get_db)):
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 7.6 GET /quality/compare-coverage ─────────────────────────────────────────
-
 @router.get("/quality/compare-coverage")
 def quality_compare_coverage(conn=Depends(get_db)):
     """Taux de couverture de la comparaison train/avion."""
-    # raw SQL: spec section 7.6
+    # Cette requête mesure combien de trajets train ont effectivement une
+    # comparaison exploitable avec l'avion.
     query = """
         WITH train_routes AS (
             SELECT
@@ -242,12 +233,10 @@ def quality_compare_coverage(conn=Depends(get_db)):
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 7.7 GET /quality/day-night-balance ────────────────────────────────────────
-
 @router.get("/quality/day-night-balance")
 def quality_day_night_balance(conn=Depends(get_db)):
     """Équilibre entre offre jour et nuit par pays et par corridors."""
-    # raw SQL: spec section 7.7
+    # Sert à repérer les corridors dominés par le jour, la nuit, ou un mix.
     query = """
         WITH corridor_stats AS (
             SELECT
@@ -276,12 +265,11 @@ def quality_day_night_balance(conn=Depends(get_db)):
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 7.8 GET /quality/summary ──────────────────────────────────────────────────
-
 @router.get("/quality/summary")
 def quality_summary(conn=Depends(get_db)):
     """Tableau de bord synthétique qualité."""
-    # raw SQL: spec section 7.8
+    # Snapshot global des indicateurs de qualité pour alimenter un écran de
+    # pilotage unique.
     query = """
         SELECT
             (SELECT COUNT(*) FROM gold_routes) AS total_routes,

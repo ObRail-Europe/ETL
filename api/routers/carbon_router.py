@@ -16,8 +16,6 @@ from ..utils.query_helpers import (
 router = APIRouter()
 
 
-# ── 5.1 GET /carbon/trip/{trip_id} ────────────────────────────────────────────
-
 @router.get("/carbon/trip/{trip_id}")
 def carbon_trip(
     trip_id: str,
@@ -27,12 +25,13 @@ def carbon_trip(
 ):
     """Bilan carbone des segments d'un trajet spécifique (le même trip_id peut
     correspondre à plusieurs segments O/D dans la table)."""
-    # raw SQL: spec section 5.1
+    # On lit directement les segments du trip pour conserver le détail utile
+    # à l'analyse carbone fine.
     wb = WhereBuilder()
     wb.add_exact("trip_id", trip_id)
     if source:
         wb.add_exact("source", source)
-    # partition pruning: departure_country
+    # Le filtre pays est normalisé pour limiter le scan si le client le fournit.
     if departure_country:
         wb.add_exact("departure_country", departure_country.upper())
 
@@ -51,8 +50,6 @@ def carbon_trip(
     return rows
 
 
-# ── 5.2 GET /carbon/estimate ──────────────────────────────────────────────────
-
 @router.get("/carbon/estimate")
 def carbon_estimate(
     origin: str = Query(..., min_length=1, max_length=100),
@@ -66,9 +63,8 @@ def carbon_estimate(
     meilleur mode écologique (best_mode le plus fréquent sur les corridors
     trouvés).
     """
-    # raw SQL: spec section 5.2
-    # MODE() WITHIN GROUP renvoie la valeur la plus fréquente de best_mode
-    # parmi les corridors correspondants.
+    # On agrège sur gold_compare_best pour exploiter un matching déjà calculé.
+    # MODE() WITHIN GROUP retourne ici le best_mode le plus fréquent.
     query = """
         SELECT
             COUNT(*)                                                AS nb_corridors,
@@ -106,7 +102,7 @@ def carbon_estimate(
         **stats,
     }
 
-    # co2_saving_pct : économie relative du train par rapport à l'avion
+    # Cet indicateur est calculé seulement quand les deux moyennes existent.
     train_co2 = stats.get("avg_train_emissions_co2")
     flight_co2 = stats.get("avg_flight_emissions_co2")
     if train_co2 is not None and flight_co2 is not None and float(flight_co2) > 0:
@@ -117,8 +113,6 @@ def carbon_estimate(
     return result
 
 
-# ── 5.3 GET /carbon/ranking ───────────────────────────────────────────────────
-
 @router.get("/carbon/ranking")
 def carbon_ranking(
     departure_country: str | None = Query(None, min_length=2, max_length=2),
@@ -128,19 +122,21 @@ def carbon_ranking(
     conn=Depends(get_db),
 ):
     """Classement des paires O/D par économie de CO₂ du train vs avion."""
-    # raw SQL: spec section 5.3
+    # Ce classement ne garde que les corridors où train et avion sont présents
+    # pour comparer des bases homogènes.
     wb = WhereBuilder()
     wb.add_raw("flight_emissions_co2 IS NOT NULL")
     wb.add_raw("train_emissions_co2 IS NOT NULL")
     wb.add_raw("flight_emissions_co2 > 0")
-    # partition pruning: departure_country
+    # Le filtre pays aide à réduire le coût sur les gros volumes.
     if departure_country:
         wb.add_exact("departure_country", departure_country.upper())
     wb.add_gte("train_distance_km", min_distance_km)
 
     where = wb.build()
 
-    # sort_by est déjà validé par le pattern regex ci-dessus
+    # sort_by est déjà borné par Query(..., pattern=...) ; on peut l'injecter
+    # sans ouvrir de surface d'injection SQL.
     data_query = f"""
         SELECT
             departure_city,
@@ -170,8 +166,6 @@ def carbon_ranking(
     )
 
 
-# ── 5.4 GET /carbon/factors ────────────────────────
-
 @router.get("/carbon/factors")
 def carbon_factors(
     country: str | None = Query(None, min_length=2, max_length=2),
@@ -180,10 +174,11 @@ def carbon_factors(
     conn=Depends(get_db),
 ):
     """Liste les facteurs d'émission utilisés, par pays, avec nb de trajets concernés."""
-    # raw SQL: spec section 5.4
+    # L'endpoint expose les facteurs réellement utilisés dans les trajets,
+    # pas seulement un catalogue théorique.
     wb = WhereBuilder()
     wb.add_raw("co2_per_pkm IS NOT NULL")
-    # partition pruning: departure_country
+    # Le filtre pays évite des agrégations inutiles quand la cible est locale.
     if country:
         wb.add_exact("departure_country", country.upper())
     wb.add_exact("mode", mode)

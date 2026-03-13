@@ -12,6 +12,7 @@ Chaque méthode correspond à une table PostgreSQL finale :
 from typing import Any
 
 from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.column import Column
 import pyspark.sql.functions as F
 from pyspark.sql.types import StringType
 from pyspark.sql.window import Window
@@ -39,7 +40,8 @@ class GoldAggregator:
         is_night_train, distance_km, co2_per_pkm, emissions_co2
     """
 
-    # Colonnes gold communes (ordre canonique)
+    # Cette liste impose un ordre stable des colonnes pour garantir des unions
+    # reproductibles et des écritures JDBC prévisibles.
     GOLD_COLS = [
         "source", "trip_id", "mode", "destination", "trip_short_name",
         "agency_name", "agency_timezone",
@@ -62,10 +64,6 @@ class GoldAggregator:
         self.logger = logger
         self.config = config
 
-    # ──────────────────────────────────────────────────────────────
-    # Chargement des parquets silver
-    # ──────────────────────────────────────────────────────────────
-
     def load_silver(self) -> dict[str, DataFrame]:
         """
         Charge les 5 parquets silver depuis data/processed/.
@@ -75,7 +73,7 @@ class GoldAggregator:
         dict avec clés : train_trip, flight, localite, emission, stop_matching
         """
         cfg = self.config
-        self.logger.debug("Chargement des parquets silver...")
+        self.logger.debug("GoldAggregator: lecture des 5 parquets silver d'entrée.")
 
         dfs: dict[str, DataFrame] = {
             "train_trip":    self.spark.read.parquet(str(cfg.TRAIN_TRIP_PATH)),
@@ -86,13 +84,9 @@ class GoldAggregator:
         }
 
         for name in dfs:
-            self.logger.debug(f"Parquet silver chargé : {name}")
+            self.logger.debug(f"GoldAggregator: parquet silver chargé -> {name}")
 
         return dfs
-
-    # ──────────────────────────────────────────────────────────────
-    # 1. Gold Train
-    # ──────────────────────────────────────────────────────────────
 
     def build_gold_train(
         self,
@@ -110,10 +104,11 @@ class GoldAggregator:
         4. Agrégation trip-level (route_id, agency…)
         5. Dédoublonnage par gare/ville/horaires + fusion days_of_week (OR bit à bit)
         """
-        self.logger.info("Début de l'agrégation gold train...")
+        self.logger.info("Gold train - étape 1/4: enrichissement villes/facteurs et calcul des distances cumulées.")
         cfg = self.config
 
-        # 1) Enrichissement ville + emission (broadcast des tables de dimension)
+        # Les dimensions sont broadcastées pour éviter des shuffles coûteux
+        # lors des jointures avec le flux train volumineux.
         df_loc_small = F.broadcast(
             df_localite.select(
                 F.col("city_id").alias("loc_city_id"),
@@ -143,7 +138,8 @@ class GoldAggregator:
             .drop("loc_city_id", "em_ref")
         )
 
-        # 2) Distance cumulée depuis le 1er arrêt du trip
+        # La distance cumulée permet de dériver une distance O/D fiable entre
+        # deux stops d'un même trip.
         w_cumul = (
             Window.partitionBy("source", "trip_id")
             .orderBy("stop_sequence")
@@ -162,8 +158,9 @@ class GoldAggregator:
             .checkpoint(eager=True)
         )
 
-        self.logger.debug("Checkpoint df_work matérialisé")
+        self.logger.debug("Gold train: checkpoint intermédiaire matérialisé après enrichissement/cumul.")
 
+        self.logger.info("Gold train - étape 2/4: génération des paires départ-arrivée par trip.")
         # 3) Côtés départ et arrivée
         df_dep = df_work.select(
             F.col("source"),
@@ -188,7 +185,8 @@ class GoldAggregator:
             F.col("cumul_dist_m").alias("arr_cumul"),
         )
 
-        # 4) Attributs trip-level
+        # Ces attributs sont constants au niveau trip et doivent être joints
+        # après génération des paires.
         df_trip_attrs = (
             df_work
             .select(
@@ -200,7 +198,7 @@ class GoldAggregator:
             .dropDuplicates(["source", "trip_id"])
         )
 
-        # 5) Paires O/D
+        # On ne conserve que les combinaisons dans le sens du parcours.
         df_pairs = (
             df_dep.join(df_arr, ["source", "trip_id"], "inner")
             .filter(F.col("dep_seq") < F.col("arr_seq"))
@@ -210,7 +208,8 @@ class GoldAggregator:
             .drop("dep_cumul", "arr_cumul", "dep_seq", "arr_seq")
         )
 
-        # 6) Dataset gold brut
+        # Ce dataset aligne les champs train sur le schéma cible partagé avec
+        # la partie flight.
         df_raw = (
             df_pairs
             .join(df_trip_attrs, ["source", "trip_id"], "inner")
@@ -222,7 +221,9 @@ class GoldAggregator:
             .withColumn("emissions_co2", F.round(F.col("distance_km") * F.col("co2_per_pkm"), 3))
         )
 
-        # 7) Dédoublonnage – fusion days_of_week par OR bit à bit
+        self.logger.info("Gold train - étape 3/4: construction du schéma gold train brut.")
+        # Plusieurs trajets peuvent décrire la même liaison ; on fusionne donc
+        # les doublons tout en conservant l'information de service.
         dedup_keys = [
             "source", "mode",
             "departure_station", "departure_city", "departure_country",
@@ -232,7 +233,7 @@ class GoldAggregator:
             "route_type",
         ]
 
-        def merged_days_expr(col_name: str = "days_of_week") -> F.Column:
+        def merged_days_expr(col_name: str = "days_of_week") -> Column:
             coalesced = F.coalesce(F.col(col_name), F.lit("0000000"))
             return F.concat(*[
                 F.max(
@@ -252,9 +253,10 @@ class GoldAggregator:
             "is_night_train", "distance_km", "co2_per_pkm", "emissions_co2",
         ]
 
-        agg_exprs: list[F.Column] = [merged_days_expr("days_of_week").alias("days_of_week")]
+        agg_exprs: list[Column] = [merged_days_expr("days_of_week").alias("days_of_week")]
         agg_exprs.extend([F.first(F.col(c), ignorenulls=True).alias(c) for c in preserve_cols])
 
+        self.logger.info("Gold train - étape 4/4: dédoublonnage et consolidation des jours de service.")
         df_gold_train = (
             df_raw
             .groupBy(*dedup_keys)
@@ -263,12 +265,8 @@ class GoldAggregator:
             .checkpoint(eager=True)
         )
 
-        self.logger.info("Agrégation gold train terminée.")
+        self.logger.info("Gold train terminé: dataset prêt pour union multimodale.")
         return df_gold_train
-
-    # ──────────────────────────────────────────────────────────────
-    # 2. Gold Flight
-    # ──────────────────────────────────────────────────────────────
 
     def build_gold_flight(
         self,
@@ -282,8 +280,7 @@ class GoldAggregator:
         Labels de route construits depuis trajet_type (ex: small_large_1000km)
         → "Court courrier - Petit Aéroport vers Grand Aéroport"
         """
-        self.logger.info("Début de l'agrégation gold flight...")
-        cfg = self.config
+        self.logger.info("Gold flight - étape 1/3: enrichissement localité + facteur d'émission.")
 
         df_loc_origin = F.broadcast(df_localite.select(
             F.col("city_id").alias("origin_city_id_l"),
@@ -294,7 +291,9 @@ class GoldAggregator:
             F.col("city_name").alias("arrival_city"),
         ))
 
-        # Mapping libellés taille aéroport
+        self.logger.info("Gold flight - étape 2/3: construction des libellés métier et métriques O/D.")
+        # Les libellés sont construits ici pour fournir une description lisible
+        # côté API/dashboard sans retraitement en aval.
         size_label = F.create_map(
             F.lit("small"),  F.lit("Petit Aéroport"),
             F.lit("medium"), F.lit("Moyen Aéroport"),
@@ -376,12 +375,8 @@ class GoldAggregator:
 
         df_gold_flight = df_gold_flight.select(self.GOLD_COLS)
 
-        self.logger.info("Agrégation gold flight terminée.")
+        self.logger.info("Gold flight - étape 3/3 terminée: projection sur le schéma gold unifié.")
         return df_gold_flight
-
-    # ──────────────────────────────────────────────────────────────
-    # 3. Gold aggloméré (UNION train + avion)
-    # ──────────────────────────────────────────────────────────────
 
     def build_gold_agg(
         self,
@@ -393,7 +388,7 @@ class GoldAggregator:
 
         Écrit directement le parquet gold aggloméré.
         """
-        self.logger.info("Début de l'agrégation gold union...")
+        self.logger.info("Gold union - étape unique: fusion train+flight puis écriture gold_routes_agglomere.")
         cfg = self.config
 
         df_agg = df_gold_train.unionByName(df_gold_flight)
@@ -404,13 +399,9 @@ class GoldAggregator:
             .write.mode("overwrite")
             .parquet(str(cfg.GOLD_AGG_PATH))
         )
-        self.logger.debug(f"Sauvegardé : {cfg.GOLD_AGG_PATH}")
+        self.logger.debug(f"Gold union: parquet aggloméré sauvegardé dans {cfg.GOLD_AGG_PATH}")
 
-        self.logger.info("Agrégation gold union terminée.")
-
-    # ──────────────────────────────────────────────────────────────
-    # 4. Candidats comparaison train vs avion
-    # ──────────────────────────────────────────────────────────────
+        self.logger.info("Gold union terminé: dataset multimodal matérialisé sur disque.")
 
     def build_compare_candidates(
         self,
@@ -429,11 +420,12 @@ class GoldAggregator:
         - Candidat 2 : le meilleur vol accessible depuis les gares (via stop_matching)
         - Candidat 3 : vols accessibles par proximité ville ↔ aéroport (≤ 100 km)
         """
-        self.logger.info("Début de la comparaison train vs avion...")
+        self.logger.info("Compare candidates - étape 1/5: création de la baseline train par O/D.")
         cfg = self.config
 
-        # Utilitaire : HH:MM:SS → secondes (tolère les formats incomplets)
-        def hms_to_seconds(col_name: str) -> F.Column:
+        # Ce convertisseur tolère les formats d'horaires imparfaits pour éviter
+        # de perdre des lignes dès qu'une source est partiellement renseignée.
+        def hms_to_seconds(col_name: str) -> Column:
             parts = F.split(F.col(col_name), ":")
             n = F.size(parts)
             return (
@@ -455,7 +447,7 @@ class GoldAggregator:
             ),
         ).otherwise(F.round(F.col("distance_km") / F.lit(cfg.TRAIN_DEFAULT_SPEED_KMH) * F.lit(60.0), 1))
 
-        # Candidat 1 – train direct
+        # Le train sert de baseline de comparaison pour chaque O/D.
         df_cmp_train = (
             df_gold_train
             .select(
@@ -474,7 +466,9 @@ class GoldAggregator:
             .withColumn("comparison_emissions_co2", F.col("emissions_co2"))
         )
 
-        # Meilleur vol par paire d'aéroports (broadcast emission)
+        self.logger.info("Compare candidates - étape 2/5: préparation des meilleurs vols par paire d'aéroports.")
+        # On calcule une table de vols enrichie puis on garde la meilleure
+        # option par paire d'aéroports pour réduire le volume très tôt.
         df_flight_enriched = (
             df_flight.alias("f")
             .join(
@@ -513,14 +507,10 @@ class GoldAggregator:
             .drop("rn")
             .checkpoint(eager=True)
         )
-        self.logger.debug("Checkpoint df_flight_best matérialisé")
+        self.logger.debug("Compare candidates: checkpoint du meilleur vol par paire d'aéroports matérialisé.")
 
-        # ── Mapping ville → aéroport depuis stop_matching ─────────────
-        # Agrège stop_matching (gare→aéroport) au niveau ville via
-        # train_trip (stop_id→city_id) + localite (city_id→city_name).
-        # Note : stop_matching.gare_id = stop_id (pas parent_station).
-        # Résultat : pour chaque ville, tous les aéroports accessibles
-        # depuis au moins une de ses gares (distance min retenue).
+        # On remonte le mapping gare→aéroport au niveau ville pour éviter des
+        # jointures directes extrêmement coûteuses au niveau stop.
         df_station_city = (
             df_train_trip
             .select("source", F.col("stop_id").alias("gare_id"), "city_id")
@@ -539,12 +529,11 @@ class GoldAggregator:
             .checkpoint(eager=True)
         )
 
-        self.logger.debug("Mapping ville → aéroport calculé depuis stop_matching")
+        self.logger.info("Compare candidates - étape 3/5: construction du mapping ville ↔ aéroports accessibles.")
+        self.logger.debug("Compare candidates: mapping ville → aéroport calculé depuis stop_matching.")
 
-        # ── Meilleur vol par paire de villes unique ───────────────────
-        # Au lieu de joindre 72M O/D × aéroports dep × aéroports arr,
-        # on déduplique d'abord au niveau paire de villes (~50K)
-        # puis on cherche le meilleur vol pour chaque paire.
+        # On déduplique d'abord par paire de villes pour contenir l'explosion
+        # combinatoire avant de projeter le résultat vers chaque trip O/D.
         df_city_pairs = (
             df_cmp_train
             .select("departure_city", "departure_country",
@@ -619,9 +608,11 @@ class GoldAggregator:
             .checkpoint(eager=True)
         )
 
-        self.logger.debug("Meilleur vol par paire de villes calculé")
+        self.logger.info("Compare candidates - étape 4/5: sélection du meilleur vol par paire de villes.")
+        self.logger.debug("Compare candidates: meilleur vol par paire de villes calculé.")
 
-        # ── Jointure retour vers les 72M O/D train ───────────────────
+        # Le résultat compact par ville est ensuite réappliqué à l'ensemble
+        # des trajets train pour construire les candidats finaux.
         city_keys = [
             "departure_city", "departure_country",
             "arrival_city", "arrival_country",
@@ -643,7 +634,8 @@ class GoldAggregator:
             )
         )
 
-        # ── Union train + flight candidates ───────────────────────────
+        # On normalise les colonnes avant union pour garder un schéma strict,
+        # quel que soit le mode candidat.
         _norm_cols = [
             "source", "trip_id",
             "departure_station", "departure_city", "departure_country",
@@ -661,12 +653,8 @@ class GoldAggregator:
             .checkpoint(eager=True)
         )
 
-        self.logger.info("Comparaison train vs avion terminée.")
+        self.logger.info("Compare candidates - étape 5/5 terminée: candidats train+flight consolidés.")
         return df_candidates
-
-    # ──────────────────────────────────────────────────────────────
-    # 5. Meilleure option par O/D
-    # ──────────────────────────────────────────────────────────────
 
     def build_compare_best(
         self,
@@ -685,7 +673,7 @@ class GoldAggregator:
         1. Trajets train avec leur meilleure alternative avion (via candidates)
         2. Vols sans aucun équivalent train (via gold_agg, anti-join sur city pair)
         """
-        self.logger.info("Début de la comparaison train vs avion...")
+        self.logger.info("Compare best - étape 1/3: ancrage sur les options train et meilleur vol associé.")
 
         od_keys = [
             "source", "trip_id",
@@ -706,7 +694,8 @@ class GoldAggregator:
             "arrival_city", "arrival_country",
         ]
 
-        # ── 1. Train-anchored : chaque train O/D + meilleur vol ─────
+        # On ancre d'abord la comparaison sur le train pour préserver le
+        # niveau de granularité métier attendu dans les tableaux finaux.
         df_train_cand = (
             df_candidates
             .filter(F.col("candidate_mode") == "train")
@@ -718,7 +707,7 @@ class GoldAggregator:
             )
             .checkpoint(eager=True)
         )
-        self.logger.debug("Checkpoint df_train_cand matérialisé")
+        self.logger.debug("Compare best: checkpoint des candidats train matérialisé.")
 
         w_flight = (
             Window.partitionBy(*join_keys)
@@ -749,10 +738,13 @@ class GoldAggregator:
             .join(df_flight_cand, on=join_keys, how="left")
         )
 
-        # ── 2. Flight-only : vols sans équivalent train ──────────────
+        self.logger.info("Compare best - étape 2/3: ajout des corridors flight sans équivalent rail.")
+        # On ajoute ensuite les vols sans équivalent train pour couvrir les
+        # paires de villes non desservies par rail.
         df_train_cities = df_train_cand.select(city_od_keys).distinct()
 
-        # Meilleur vol par city-pair (émissions ↓, durée ↓)
+        # Le tri privilégie d'abord l'empreinte carbone, puis la distance
+        # comme critère secondaire de stabilité.
         w_flight_city = (
             Window.partitionBy(*city_od_keys)
             .orderBy(
@@ -781,7 +773,8 @@ class GoldAggregator:
             )
         )
 
-        # ── 3. Union + best_mode ─────────────────────────────────────
+        # La décision finale favorise systématiquement le mode le moins
+        # émetteur quand les deux options existent.
         df_best = (
             df_train_vs_flight
             .unionByName(df_flights_only)
@@ -798,12 +791,8 @@ class GoldAggregator:
             )
         )
 
-        self.logger.info("Comparaison train vs avion terminée.")
+        self.logger.info("Compare best - étape 3/3 terminée: meilleure option écologique calculée par O/D.")
         return df_best
-
-    # ──────────────────────────────────────────────────────────────
-    # run() – point d'entrée unique
-    # ──────────────────────────────────────────────────────────────
 
     def run(self) -> dict[str, Any]:
         """
@@ -817,46 +806,50 @@ class GoldAggregator:
         metrics: dict[str, int] = {}
 
         try:
+            self.logger.info("GoldAggregator run: démarrage du pipeline gold (train, flight, union, compare).")
             silver = self.load_silver()
             cfg = self.config
 
-            # 1. Gold train – déjà matérialisé via checkpoint interne
+            # Cette étape matérialise déjà un checkpoint interne, ce qui rend
+            # les étapes suivantes plus stables en cas de gros volumes.
             df_gold_train = self.build_gold_train(
                 silver["train_trip"], silver["localite"], silver["emission"]
             )
             dataframes["gold_train"] = df_gold_train
 
-            # 2. Gold flight – lazy, matérialisé lors du write gold_agg
+            # Ce DataFrame reste lazy jusqu'à l'écriture de gold_agg, ce qui
+            # évite une action Spark intermédiaire inutile.
             df_gold_flight = self.build_gold_flight(
                 silver["flight"], silver["localite"], silver["emission"]
             )
             dataframes["gold_flight"] = df_gold_flight
 
-            # 3. Gold aggloméré – seul parquet écrit sur disque
-            #    L'action write matérialise df_gold_flight
-            #    df_gold_train est lu depuis le checkpoint (rapide)
+            # L'écriture de gold_agg matérialise flight, tandis que train est
+            # relu depuis checkpoint, ce qui limite les recomputations.
             self.build_gold_agg(df_gold_train, df_gold_flight)
             dataframes["gold_agg"] = self.spark.read.parquet(str(cfg.GOLD_AGG_PATH))
 
-            # 4. Candidats comparaison
+            # Les candidats regroupent baseline train et alternatives flight
+            # dans un même format prêt pour la sélection finale.
             df_candidates = self.build_compare_candidates(
                 df_gold_train, silver["flight"], silver["emission"],
                 silver["stop_matching"], silver["train_trip"], silver["localite"],
             )
             dataframes["gold_compare_candidates"] = df_candidates
 
-            # 5. Comparaison train vs avion par O/D
+            # On réduit ensuite à la meilleure option par O/D pour simplifier
+            # l'usage côté API et dashboard.
             df_best = self.build_compare_best(df_candidates, dataframes["gold_agg"])
             dataframes["gold_compare_best"] = df_best
 
-            # Counts (gold_train depuis checkpoint, gold_flight recalculé)
+            # Ces métriques offrent un contrôle de cohérence rapide après run.
             metrics["gold_train_rows"] = df_gold_train.count()
             metrics["gold_flight_rows"] = dataframes["gold_agg"].filter(
                 F.col("mode") == "flight"
             ).count()
             self.logger.info(
-                f"Gold train : {metrics['gold_train_rows']:,} lignes | "
-                f"Gold flight : {metrics['gold_flight_rows']:,} lignes"
+                f"GoldAggregator run terminé: train={metrics['gold_train_rows']:,} lignes, "
+                f"flight={metrics['gold_flight_rows']:,} lignes"
             )
 
             return {

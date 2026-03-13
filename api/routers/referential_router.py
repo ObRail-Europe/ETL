@@ -15,8 +15,6 @@ from ..utils.query_helpers import (
 router = APIRouter()
 
 
-# ── 2.1 GET /cities ──────────────────────────────────────────────────────────
-
 @router.get("/cities")
 def list_cities(
     country: str | None = Query(None, min_length=2, max_length=2),
@@ -27,7 +25,8 @@ def list_cities(
     conn=Depends(get_db),
 ):
     """Liste des villes disponibles dans la base."""
-    # raw SQL: spec section 2.1
+    # Le CTE centralise les métriques de ville pour servir à la fois les
+    # filtres et le rendu paginé.
     wb = WhereBuilder()
     if country:
         wb.add_raw("country_code = %s", [country.upper()])
@@ -84,16 +83,14 @@ def list_cities(
     )
 
 
-# ── 2.2 GET /cities/{country_code} ───────────────────────────────────────────
-
 @router.get("/cities/{country_code}")
 def cities_by_country(
     country_code: str,
     conn=Depends(get_db),
 ):
     """Liste des villes d'un pays spécifique, avec métriques."""
-    # raw SQL: spec section 2.2
-    # partition pruning: departure_country
+    # On applique le filtre pays directement pour limiter le scan dès le début
+    # de la requête agrégée.
     query = """
         SELECT
             departure_city AS city_name,
@@ -112,8 +109,6 @@ def cities_by_country(
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 2.3 GET /stations ────────────────────────────────────────────────────────
-
 @router.get("/stations")
 def list_stations(
     city: str | None = Query(None, max_length=100),
@@ -123,12 +118,13 @@ def list_stations(
     conn=Depends(get_db),
 ):
     """Liste des gares ferroviaires."""
-    # raw SQL: spec section 2.3
+    # Cette vue agrège les départs par gare pour exposer des indicateurs
+    # immédiatement exploitables côté dashboard.
     wb = WhereBuilder()
     wb.add_raw("mode = 'train'")
     wb.add_raw("departure_station IS NOT NULL")
     wb.add_ilike("departure_city", city)
-    # partition pruning: departure_country
+    # Le code pays est normalisé pour rester aligné avec les partitions.
     if country:
         wb.add_exact("departure_country", country.upper())
     wb.add_ilike("departure_station", search)
@@ -167,8 +163,6 @@ def list_stations(
     )
 
 
-# ── 2.4 GET /stations/{country_code}/{city} ──────────────────────────────────
-
 @router.get("/stations/{country_code}/{city}")
 def stations_by_city(
     country_code: str,
@@ -176,8 +170,8 @@ def stations_by_city(
     conn=Depends(get_db),
 ):
     """Toutes les gares d'une ville donnée."""
-    # raw SQL: spec section 2.4
-    # partition pruning: departure_country
+    # Le filtrage strict sur le pays permet de réduire fortement le volume
+    # avant la recherche partielle sur la ville.
     query = """
         SELECT
             departure_station AS station_name,
@@ -200,8 +194,6 @@ def stations_by_city(
     return {"status": "ok", "count": len(rows), "data": rows}
 
 
-# ── 2.5 GET /airports ────────────────────────────────────────────────────────
-
 @router.get("/airports")
 def list_airports(
     city: str | None = Query(None, max_length=100),
@@ -211,12 +203,12 @@ def list_airports(
     conn=Depends(get_db),
 ):
     """Liste des aéroports disponibles."""
-    # raw SQL: spec section 2.5
+    # Même logique que les gares, appliquée au périmètre flight uniquement.
     wb = WhereBuilder()
     wb.add_raw("mode = 'flight'")
     wb.add_raw("departure_station IS NOT NULL")
     wb.add_ilike("departure_city", city)
-    # partition pruning: departure_country
+    # Le filtre pays est gardé tôt pour éviter un scan trop large.
     if country:
         wb.add_exact("departure_country", country.upper())
     wb.add_ilike("departure_station", search)
@@ -254,8 +246,6 @@ def list_airports(
     )
 
 
-# ── 2.6 GET /airports/{country_code}/{city} ──────────────────────────────────
-
 @router.get("/airports/{country_code}/{city}")
 def airports_by_city(
     country_code: str,
@@ -263,8 +253,7 @@ def airports_by_city(
     conn=Depends(get_db),
 ):
     """Tous les aéroports d'une ville donnée."""
-    # raw SQL: spec section 2.6
-    # partition pruning: departure_country
+    # La clause pays sert ici de garde-fou de performance avant le filtre ville.
     query = """
         SELECT
             departure_station AS airport_name,

@@ -89,12 +89,13 @@ class DataTransformer:
         Si un transformateur echoue, la pipeline s'arrête directement
         """
         self.logger.info(f"Date d'exécution: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info("Démarrage transformation: exécution séquentielle des 8 phases avec arrêt immédiat en cas d'échec.")
 
         self.monitor.start("transformation_totale")
         results: dict[str, Any] = {}
 
         try:
-            # Phase 1 : Mobility Database
+            self.logger.info("Étape 1/8 - Mobility Database: préparation des tables GTFS normalisées.")
             self.logger.log_section("TRANSFORMATION MDB", level="INFO")
             mdb_transformer = MobilityDatabaseTransformer(
                 spark=self.spark,
@@ -104,8 +105,9 @@ class DataTransformer:
             mdb_result = mdb_transformer.run()
             results['mobility_database'] = mdb_result
             df_mdb = mdb_result['dataframes']['df_mdb']
+            self.logger.info("Étape 1/8 terminée - Mobility Database prêt pour la fusion.")
 
-            # Phase 2 : Back-on-Track
+            self.logger.info("Étape 2/8 - BackOnTrack: harmonisation BOTN et calcul des segments.")
             self.logger.log_section("TRANSFORMATION BOTN", level="INFO")
             botn_transformer = BackOnTrackTransformer(
                 spark=self.spark,
@@ -115,8 +117,9 @@ class DataTransformer:
             botn_result = botn_transformer.run()
             results['backontrack'] = botn_result
             df_botn = botn_result['dataframes']['df_botn']
+            self.logger.info("Étape 2/8 terminée - BackOnTrack aligné avec le schéma MDB.")
 
-            # Phase 3 : Ember
+            self.logger.info("Étape 3/8 - Ember: préparation des intensités carbone par pays.")
             self.logger.log_section("TRANSFORMATION EMBER", level="INFO")
             ember_transformer = EmberTransformer(
                 spark=self.spark,
@@ -126,8 +129,9 @@ class DataTransformer:
             ember_result = ember_transformer.run()
             results['ember'] = ember_result
             df_ember = ember_result['dataframes']['df_ember']
+            self.logger.info("Étape 3/8 terminée - Intensités Ember disponibles.")
 
-            # Phase 4 : ADEME
+            self.logger.info("Étape 4/8 - ADEME: calcul des facteurs d'émission aérien.")
             self.logger.log_section("TRANSFORMATION ADEME", level="INFO")
             ademe_transformer = AdemeTransformer(
                 spark=self.spark,
@@ -137,8 +141,9 @@ class DataTransformer:
             ademe_result = ademe_transformer.run()
             results['ademe'] = ademe_result
             df_ademe = ademe_result['dataframes']['df_ademe']
+            self.logger.info("Étape 4/8 terminée - Facteurs ADEME prêts.")
 
-            # Phase 5 : OurAirports (city matching + routes, sans sauvegarde)
+            self.logger.info("Étape 5/8 - OurAirports: enrichissement villes + génération des routes aériennes.")
             self.logger.log_section("TRANSFORMATION OURAIRPORTS", level="INFO")
             ourairports_transformer = OurAirportsTransformer(
                 spark=self.spark,
@@ -151,8 +156,9 @@ class DataTransformer:
             results['ourairports'] = ourairports_result
             df_airports = ourairports_result['dataframes']['df_airports']
             df_fly_trip = ourairports_result['dataframes']['df_fly_trip']
+            self.logger.info("Étape 5/8 terminée - Aéroports enrichis et trajets flight générés.")
 
-            # Phase 4 : Merge + Schéma en étoile
+            self.logger.info("Étape 6/8 - Merge: fusion MDB/BOTN et construction du schéma en étoile.")
             self.logger.log_section("MERGE ET SCHÉMA EN ÉTOILE", level="INFO")
             merge_transformer = MergeTransformer(
                 spark=self.spark,
@@ -169,12 +175,14 @@ class DataTransformer:
             results['merge'] = merge_result
             df_trip = merge_result['dataframes']['df_trip']
             df_localite = merge_result['dataframes']['df_localite']
+            self.logger.info("Étape 6/8 terminée - Tables trip/localite/emission prêtes.")
 
-            # Phase 7 : Ajout FK city_id dans flight + sauvegarde
+            self.logger.info("Étape 7/8 - Flight: ajout des FK city_id puis écriture du parquet final.")
             self.logger.log_section("ENRICHISSEMENT FLIGHT + SAUVEGARDE", level="INFO")
             self._enrich_and_save_flight(df_fly_trip, df_localite)
+            self.logger.info("Étape 7/8 terminée - flight.parquet sauvegardé.")
 
-            # Phase 8 : StopMatching 
+            self.logger.info("Étape 8/8 - StopMatching: rapprochement gare ↔ aéroport.")
             self.logger.log_section("STOP MATCHING (GARE ↔ AÉROPORT)", level="INFO")
             stop_matching_transformer = StopMatchingTransformer(
                 spark=self.spark,
@@ -186,6 +194,7 @@ class DataTransformer:
                 df_airports=df_airports,
             )
             results['stop_matching'] = stop_matching_result
+            self.logger.info("Étape 8/8 terminée - stop_matching.parquet produit.")
 
             overall_status = 'SUCCESS'
 
@@ -213,8 +222,9 @@ class DataTransformer:
         Jointure avec localite sur (city_name, country_code) pour origin et destination
         """
         cfg = self.transformation_config
+        self.logger.info("Flight enrichissement: jointure des villes origine/destination vers city_id.")
 
-        # préparer les alias pour éviter les conflits de colonnes
+        # Prépare les aliases pour distinguer clairement les jointures origine/destination.
         df_loc_origin = df_localite.select(
             F.col("city_id").alias("origin_city_id"),
             F.col("city_name").alias("_o_city"),
@@ -226,7 +236,7 @@ class DataTransformer:
             F.col("country_code").alias("_d_country"),
         )
 
-        # jointure origin
+        self.logger.debug("Flight enrichissement: jointure FK origin_city_id en cours...")
         df_flight = df_fly_trip.join(
             F.broadcast(df_loc_origin),
             (df_fly_trip.origin_city == df_loc_origin._o_city)
@@ -234,7 +244,7 @@ class DataTransformer:
             "left"
         ).drop("_o_city", "_o_country")
 
-        # jointure destination
+        self.logger.debug("Flight enrichissement: jointure FK dest_city_id en cours...")
         df_flight = df_flight.join(
             F.broadcast(df_loc_dest),
             (df_flight.dest_city == df_loc_dest._d_city)
@@ -242,18 +252,17 @@ class DataTransformer:
             "left"
         ).drop("_d_city", "_d_country")
 
-        # supp les colonnes intermediaires de city matching
+        self.logger.debug("Flight enrichissement: suppression des colonnes techniques intermédiaires.")
         df_flight = df_flight.drop(
             "origin_city", "origin_country_geo",
             "dest_city", "dest_country_geo",
         )
 
-        # sauvegarde flight.parquet
-        self.logger.info("Sauvegarde flight.parquet...")
+        self.logger.info("Flight enrichissement: écriture de flight.parquet...")
         df_flight.coalesce(cfg.FLIGHT_COALESCE_PARTITIONS).write.mode("overwrite").parquet(
             str(cfg.FLIGHT_OUTPUT_PATH)
         )
-        self.logger.debug(f"flight sauvegardé : {cfg.FLIGHT_OUTPUT_PATH}")
+        self.logger.debug(f"Flight enrichissement terminé: fichier sauvegardé dans {cfg.FLIGHT_OUTPUT_PATH}")
 
     def _print_summary(
         self,
@@ -275,9 +284,12 @@ class DataTransformer:
         """
         self.logger.log_section("RÉSUMÉ DE LA TRANSFORMATION", level="INFO")
 
+        typed_results: dict[str, dict[str, Any]] = {
+            name: value for name, value in results.items() if isinstance(value, dict)
+        }
         transformer_count = sum(
-            1 for k, v in results.items()
-            if isinstance(v, dict) and v.get('status') == 'SUCCESS'
+            1 for value in typed_results.values()
+            if value.get('status') == 'SUCCESS'
         )
 
         metrics: dict[str, str | float | int] = {

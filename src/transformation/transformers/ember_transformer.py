@@ -35,29 +35,25 @@ class EmberTransformer(BaseTransformer):
             Si le fichier Ember est manquant
         """
         cfg = self.config
-        self.logger.info("Chargement Ember...")
+        self.logger.info("Ember - étape 1/5: chargement des intensités carbone annuelles.")
 
         df_ember = self.spark.read.parquet(
             str(cfg.EMBER_RAW_PATH / "ember_carbon_intensity.parquet")
         )
 
-        # filtrage de la valeur la plus récente par pays
-        self.logger.debug("Filtrage de la valeur la plus récente par pays...")
+        self.logger.info("Ember - étape 2/5: sélection de la valeur la plus récente par pays.")
         df_ember_last = self._filter_latest_per_country(df_ember)
 
-        # conversion alpha-3 → alpha-2
-        self.logger.debug("Conversion des codes pays alpha-3 → alpha-2...")
+        self.logger.info("Ember - étape 3/5: conversion des codes pays alpha-3 vers alpha-2.")
         df_ember_last = self._convert_alpha3_to_alpha2(df_ember_last)
 
-        # mapping des micro-états
-        self.logger.debug("Mapping des micro-états (Monaco, Vatican, Liechtenstein)...")
+        self.logger.info("Ember - étape 4/5: traitement des micro-états et règles spécifiques.")
         df_ember_last = self._handle_micro_states(df_ember_last)
 
-        # calcul de la moyenne Andorre (FR + ES)
-        self.logger.debug("Calcul de l'intensité carbone Andorre (moyenne FR/ES)...")
+        self.logger.debug("Ember: calcul complémentaire Andorre via moyenne FR/ES si disponible.")
         df_ember_last = self._compute_andorra_average(df_ember_last)
 
-        self.logger.info("Phase Ember terminée.")
+        self.logger.info("Ember - étape 5/5 terminée: intensités pays prêtes pour la table emission.")
         return {"df_ember": df_ember_last}
 
     # -----------------------------------------------------------------
