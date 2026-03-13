@@ -95,6 +95,9 @@ class ChargementConfig(BaseConfig):
     # Chemin du script SQL d'initialisation du schéma PostgreSQL
     SQL_INIT_SCRIPT: Path = BaseConfig.PROJECT_ROOT / "scripts" / "init.sql"
 
+    # Chemin du script SQL post-chargement (index, ANALYZE) – exécuté après JDBC
+    SQL_POST_LOAD_SCRIPT: Path = BaseConfig.PROJECT_ROOT / "scripts" / "post_load.sql"
+
     # ──────────────────────────────────────────────────────────────
     # Constantes métier pour les agrégations
     # ──────────────────────────────────────────────────────────────

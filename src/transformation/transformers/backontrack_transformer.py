@@ -85,7 +85,8 @@ class BackOnTrackTransformer(BaseTransformer):
         )
 
         # checkpoint post-jointures (tronque le lineage + matérialise)
-        df_botn = df_botn.localCheckpoint()
+        # eager=False : enchaînement linéaire immédiat, évite une action dédiée
+        df_botn = df_botn.checkpoint(eager=False)
         self.logger.debug("Checkpoint BOTN post-jointures matérialisé")
 
         # dédoublonnage et renumérotation des trajets en Y
@@ -159,7 +160,8 @@ class BackOnTrackTransformer(BaseTransformer):
         )
 
         # checkpoint post-Haversine (tronque le lineage + matérialise)
-        df_botn = df_botn.localCheckpoint()
+        # eager=False : pipeline linéaire, matérialisation au prochain job
+        df_botn = df_botn.checkpoint(eager=False)
         self.logger.debug("Checkpoint BOTN post-Haversine matérialisé")
 
         # filtre segments à distance nulle ou invalide
@@ -206,29 +208,33 @@ class BackOnTrackTransformer(BaseTransformer):
         df = df.dropDuplicates(["trip_id", "stop_id", "stop_sequence"])
 
         # trips problématiques : même stop_sequence pour plusieurs stop_id
-        dup_trip_ids = [
-            r[0] for r in
+        # (agrégation SQL valide, sans fenêtre dans un groupBy)
+        dup_trip_ids = (
             df.groupBy("trip_id", "stop_sequence")
-            .agg(F.countDistinct("stop_id").alias("c"))
-            .filter(F.col("c") > 1)
+            .agg(F.count("stop_id").alias("nb_stops"))
+            .filter(F.col("nb_stops") > 1)
             .select("trip_id")
             .distinct()
-            .collect()
-        ]
+            .withColumn("needs_renumber", F.lit(True))
+        )
 
         # renumérotation par horaire pour les trips en Y
         w_renum = Window.partitionBy("trip_id").orderBy(
-            F.coalesce("departure_time", "arrival_time")
+            F.coalesce("departure_time", "arrival_time"),
+            F.col("stop_sequence"),
+            F.col("stop_id"),
         )
         df = (
             df
+            .join(F.broadcast(dup_trip_ids), ["trip_id"], "left")
             .withColumn(
                 "stop_sequence_new",
                 F.when(
-                    F.col("trip_id").isin(dup_trip_ids),
+                    F.col("needs_renumber").isNotNull(),
                     F.row_number().over(w_renum) - 1
                 ).otherwise(F.col("stop_sequence"))
             )
+            .drop("needs_renumber")
             .drop("stop_sequence")
             .withColumnRenamed("stop_sequence_new", "stop_sequence")
         )

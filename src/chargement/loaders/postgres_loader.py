@@ -139,7 +139,153 @@ class PostgresLoader:
             return {"status": "FAILED", "error": str(exc)}
 
     # ──────────────────────────────────────────────────────────────
-    # Truncate (réinitialisation avant rechargement)
+    # Post-chargement : index & ANALYZE
+    # ──────────────────────────────────────────────────────────────
+
+    def post_load(self) -> dict[str, Any]:
+        """
+        Exécute le script post-chargement : création des index (IF NOT EXISTS)
+        et ANALYZE sur les tables gold.
+
+        Doit être appelé après tous les chargements JDBC pour que les index
+        soient construits sur les données finales (plus rapide qu'un index
+        incrémental pendant l'insert).
+
+        Returns
+        -------
+        dict avec statut et éventuelles erreurs
+        """
+        sql_path: Path = self.config.SQL_POST_LOAD_SCRIPT
+        self.logger.debug(f"Post-chargement PG depuis : {sql_path}")
+
+        if not sql_path.exists():
+            msg = f"Script post-load introuvable : {sql_path}"
+            self.logger.error(msg)
+            return {"status": "FAILED", "error": msg}
+
+        sql_content = sql_path.read_text(encoding="utf-8")
+
+        try:
+            conn = self._get_connection()
+            conn.autocommit = False
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql_content)
+                    conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+            self.logger.info("Index et ANALYZE post-chargement appliqués.")
+            return {"status": "SUCCESS"}
+
+        except Exception as exc:
+            self.logger.error(f"Erreur post-chargement : {exc}")
+            return {"status": "FAILED", "error": str(exc)}
+
+    # ──────────────────────────────────────────────────────────────
+    # Upsert via table de staging
+    # ──────────────────────────────────────────────────────────────
+
+    def upsert_via_staging(
+        self,
+        df: DataFrame,
+        table_name: str,
+    ) -> dict[str, Any]:
+        """
+        Upsert incrémental par source de données.
+
+        Algorithme :
+        1. Écrit df dans {table}_staging via JDBC (overwrite – table plate, sans partition)
+        2. Récupère les valeurs de source distinctes présentes dans le staging
+        3. DELETE FROM {table} WHERE source IN (...) → supprime uniquement
+           les sources affectées par ce run
+        4. INSERT INTO {table} SELECT * FROM {table}_staging
+        5. DROP TABLE {table}_staging
+
+        Résultat : les sources non concernées par ce run conservent leurs données.
+        """
+        staging = f"{table_name}_staging"
+        self.logger.debug(f"Upsert {table_name} via staging {staging}…")
+
+        # Étape 1 : staging
+        load_result = self.load_dataframe(df, staging, mode="overwrite")
+        if load_result["status"] == "FAILED":
+            return load_result
+
+        try:
+            conn = self._get_connection()
+            conn.autocommit = False
+            try:
+                with conn.cursor() as cur:
+                    # Étape 2 : sources présentes dans le staging
+                    cur.execute(
+                        sql.SQL("SELECT DISTINCT source FROM {}").format(
+                            sql.Identifier(staging)
+                        )
+                    )
+                    sources = [r[0] for r in cur.fetchall() if r[0] is not None]
+
+                    if not sources:
+                        self.logger.warning(
+                            f"Staging {staging} vide ou sans colonne source – upsert ignoré."
+                        )
+                        cur.execute(
+                            sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(staging))
+                        )
+                        conn.commit()
+                        return {"status": "SUCCESS", "deleted": 0, "inserted": 0}
+
+                    self.logger.debug(
+                        f"{table_name} : mise à jour pour {len(sources)} source(s) : {sources}"
+                    )
+
+                    # Étape 3 : suppression des lignes des sources concernées
+                    placeholders = sql.SQL(", ").join(
+                        sql.Placeholder() for _ in sources
+                    )
+                    cur.execute(
+                        sql.SQL("DELETE FROM {} WHERE source IN ({})")
+                        .format(sql.Identifier(table_name), placeholders),
+                        sources,
+                    )
+                    deleted = cur.rowcount
+
+                    # Étape 4 : insertion depuis le staging
+                    cur.execute(
+                        sql.SQL("INSERT INTO {} SELECT * FROM {}").format(
+                            sql.Identifier(table_name),
+                            sql.Identifier(staging),
+                        )
+                    )
+                    inserted = cur.rowcount
+
+                    # Étape 5 : suppression du staging
+                    cur.execute(
+                        sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(staging))
+                    )
+
+                    conn.commit()
+
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+            self.logger.info(
+                f"{table_name} : {deleted} ligne(s) remplacées, {inserted} insérée(s)."
+            )
+            return {"status": "SUCCESS", "deleted": deleted, "inserted": inserted}
+
+        except Exception as exc:
+            self.logger.error(f"Erreur upsert {table_name} : {exc}")
+            return {"status": "FAILED", "error": str(exc)}
+
+    # ──────────────────────────────────────────────────────────────
+    # Truncate (réinitialisation complète – gardé pour usage explicite)
     # ──────────────────────────────────────────────────────────────
 
     def truncate_table(self, table_name: str) -> bool:

@@ -2,6 +2,12 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: obrail_postgres
+    command: >
+      postgres
+        -c max_wal_size=4GB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=512MB
+        -c synchronous_commit=off
     environment:
       POSTGRES_DB: ${PG_DB:-obrail}
       POSTGRES_USER: ${PG_USER:-obrail}
@@ -12,31 +18,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-obrail}"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-obrail} -d ${PG_DB:-obrail}"]
       interval: 10s
       timeout: 5s
       retries: 5
-  api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-    container_name: obrail_api
-    env_file: .env
-    environment:
-      PG_HOST: postgres
-      PG_PORT: 5432
-      PG_DB: ${PG_DB:-obrail}
-      PG_USER: ${PG_USER:-obrail}
-      PG_PASSWORD: ${PG_PASSWORD:-obrail123}
-      DATABASE_URL: postgresql://${PG_USER:-obrail}:${PG_PASSWORD:-obrail123}@postgres:5432/${PG_DB:-obrail}
-      API_KEY: ${API_KEY:-changeme}
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./api/:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   etl:
     build: .
@@ -59,6 +44,24 @@ services:
         condition: service_healthy
     # Optionnel : pour nettoyer PostgreSQL à chaque run
     # command: --phases extraction transform load
+
+  api:
+    build: .
+    container_name: obrail_api
+    env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: ${PG_DB:-obrail}
+      PG_USER: ${PG_USER:-obrail}
+      PG_PASSWORD: ${PG_PASSWORD:-obrail123}
+    ports:
+      - "8000:8000"
+    entrypoint: []
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api:
     build: .

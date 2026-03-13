@@ -59,8 +59,9 @@ class MergeTransformer(BaseTransformer):
         self.logger.debug(f"Colonnes communes MDB/BOTN: {len(common_cols)}")
 
         # checkpoint : tronque le lineage MDB/BOTN (plan Catalyst trop large sinon)
-        df_mdb_aligned = df_mdb.select(*common_cols).localCheckpoint()
-        df_botn_aligned = df_botn.select(*common_cols).localCheckpoint()
+        # eager=False : pipeline linéaire juste après, évite une action supplémentaire immédiate
+        df_mdb_aligned = df_mdb.select(*common_cols).checkpoint(eager=False)
+        df_botn_aligned = df_botn.select(*common_cols).checkpoint(eager=False)
         self.logger.debug("Checkpoint MDB/BOTN matérialisé")
 
         # matching L1 & L2
@@ -73,21 +74,24 @@ class MergeTransformer(BaseTransformer):
         df_final = apply_tz_mapping(df_final, self.config.TZ_MAPPING)
 
         # checkpoint df_final post-geo (tronque lineage, lu 3 fois)
-        df_final = df_final.localCheckpoint()
+        # eager=True : dataset réutilisé dans plusieurs branches
+        df_final = df_final.checkpoint(eager=True)
         self.logger.debug("Checkpoint df_final post-geo matérialisé")
 
         # construction table localite (trips + aéroports) 
         df_localite = self._build_localite_table(df_final, df_airports)
 
         # checkpoint localite (tronque le lineage)
-        df_localite = df_localite.localCheckpoint()
+        # eager=True : réutilisé pour emission + remplacement de FK trip
+        df_localite = df_localite.checkpoint(eager=True)
         self.logger.debug("Checkpoint localite matérialisé")
 
         # construction table emission
         df_emission = self._build_emission_table(df_localite, df_ember, df_ademe)
 
         # checkpoint emission (tronque le lineage)
-        df_emission = df_emission.localCheckpoint()
+        # eager=False : consommation linéaire immédiate ensuite
+        df_emission = df_emission.checkpoint(eager=False)
         self.logger.debug("Checkpoint emission matérialisé")
 
         # remplacement FK dans trip
