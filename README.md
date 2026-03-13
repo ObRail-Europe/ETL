@@ -224,21 +224,21 @@ Seul l'endpoint `POST /api/v1/import` nécessite une authentification. Il faut p
 
 Un dashboard interactif développé avec Plotly Dash est disponible pour explorer les données visuellement. Il permet de consulter les indicateurs de qualité, les facteurs d'émission, et de comparer les modes de transport sur une carte.
 
-Pour le lancer :
+Le dashboard est conteneurisé et peut être lancé via Docker Compose :
+
 ```bash
 docker compose up -d dashboard
 ```
-Le dashboard est ensuite accessible sur `http://localhost:8050` et nécessite que l'API soit également en cours d'exécution.
 
-### Optimisations et Fonctionnalités
+Il est ensuite accessible sur `http://localhost:8050`.
 
-Le dashboard intègre plusieurs optimisations pour garantir une expérience fluide :
+### Fonctionnalités Clés
 
-- **Parallélisation des requêtes** : Les pages nécessitant plusieurs sources de données (par exemple, la page d'accueil) chargent ces dernières en parallèle. Un *pool de threads* est utilisé pour lancer plusieurs appels à l'API simultanément, ce qui réduit considérablement les temps de chargement.
+- **Appels API Parallèles** : Pour accélérer le chargement des pages, les appels à l'API FastAPI sont exécutés en parallèle à l'aide d'un `ThreadPoolExecutor`. Cela permet de récupérer plusieurs sources de données simultanément sans qu'un appel lent ne bloque les autres.
+- **Cache des Données** : Un système de cache sur disque (`diskcache`) est utilisé pour mémoriser les réponses de l'API. Chaque réponse est mise en cache avec une durée de vie (TTL) adaptée à la volatilité des données (de 5 minutes pour les recherches à 30 minutes pour les référentiels stables). Cela réduit la charge sur l'API et accélère la navigation. Le cache est stocké dans `dashboard/.cache/`.
+- **Callbacks Asynchrones** : Les opérations longues, comme l'export de fichiers CSV, sont gérées par des *background callbacks* de Dash. Celles-ci s'exécutent dans un processus séparé, évitant que l'interface utilisateur ne soit bloquée ou ne subisse un *timeout*. Ce gestionnaire de callbacks utilise le même backend de cache sur disque.
 
-- **Mise en cache agressive** : Les réponses de l'API sont mises en cache sur disque (`diskcache`) pour des durées variables (de 5 à 30 minutes) selon la nature des données. La navigation entre les pages et les rechargements sont quasi-instantanés pour les données déjà consultées.
-
-- **Tâches de fond asynchrones** : Les opérations potentiellement longues (comme l'export d'un grand volume de données en CSV) sont déléguées à un *gestionnaire de tâches de fond*. Cela permet à l'interface de rester réactive, sans risque de *timeout*, pendant que le serveur travaille.
+Le dashboard se connecte à l'API FastAPI pour récupérer les données, il est donc nécessaire que le conteneur de l'API soit également en cours d'exécution.
 
 ---
 
