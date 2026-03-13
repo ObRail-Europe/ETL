@@ -16,3 +16,13 @@ fastapi
 uvicorn[standard]
 pydantic
 slowapi
+
+# Dashboard ObRail
+dash
+dash[diskcache]
+dash-bootstrap-components
+plotly
+httpx
+diskcache
+gunicorn
+pandas

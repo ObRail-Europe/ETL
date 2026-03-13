@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Code source
 COPY src/ ./src/
 COPY api/ ./api/
+COPY dashboard/ ./dashboard/
 
 # Répertoires créés ici pour les runs sans volume monté (dev/test)
 # En production ils sont remplacés par les volumes docker-compose

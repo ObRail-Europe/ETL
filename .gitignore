@@ -8,6 +8,7 @@ artifacts/
 
 pycache/
 __pycache__/
+dashboard/.cache/
 
 .vscode/
 
